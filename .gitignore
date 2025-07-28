@@ -1,7 +1,4 @@
-# Игнорировать секретные файлы
 nodejs_bot/token.txt
 python_api/.env
-
-# Игнорировать папки с зависимостями и кешем
 nodejs_bot/node_modules/
-python_api/__pycache__/
+python_api/pycache/
