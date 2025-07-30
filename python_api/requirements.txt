@@ -4,3 +4,5 @@ uvicorn==0.30.1
 python-dotenv==1.0.1
 playwright==1.44.0
 httpx==0.27.0
+shazamio
+opencv-python-headless
