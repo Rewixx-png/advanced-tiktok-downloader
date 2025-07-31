@@ -19,8 +19,9 @@ const API_URL = 'http://127.0.0.1:18361/video_data';
 const bot = new TelegramBot(token, { polling: true });
 console.log('Бот успешно запущен и готов к работе!');
 
-// --- ИЗМЕНЕНИЕ: Добавлена поддержка ссылок /t/ ---
-const TIKTOK_URL_REGEX = /https?:\/\/(?:www\.)?(?:m\.)?tiktok\.com\/(?:@[-a-zA-Z0-9._]{1,256}\/video\/[0-9]+|t\/[a-zA-Z0-9]+)|https?:\/\/vt\.tiktok\.com\/[a-zA-Z0-9]+/;
+// --- ИЗМЕНЕНИЕ И УЛУЧШЕНИЕ: Универсальное регулярное выражение для ВСЕХ ссылок ---
+const TIKTOK_URL_REGEX = /https?:\/\/(?:[a-zA-Z]{2,3}\.)?tiktok\.com\/((?:@[-a-zA-Z0-9._]{1,256}\/video\/[0-9]+)|(?:t\/[a-zA-Z0-9]+)|(?:[a-zA-Z0-9]{9,}))\/?/g;
+
 
 // --- ОСНОВНАЯ ЛОГИКА ---
 
@@ -30,7 +31,10 @@ bot.on('message', async (msg) => {
 
     if (!text) return;
     
-    const match = text.match(TIKTOK_URL_REGEX);
+    // Сбрасываем состояние regex перед каждым новым поиском
+    TIKTOK_URL_REGEX.lastIndex = 0; 
+    const match = TIKTOK_URL_REGEX.exec(text);
+    
     if (!match) return;
 
     const tiktokUrl = match[0];
