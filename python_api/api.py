@@ -30,7 +30,6 @@ async def lifespan(app: FastAPI):
     # --- КОД ВЫПОЛНЯЕТСЯ ОДИН РАЗ ПРИ СТАРТЕ ---
     logger.info("Запускаем TikTok API и создаем сессию... Это может занять до минуты.")
     api = TikTokApi()
-    # УБРАН НЕКОРРЕКТНЫЙ АРГУМЕНТ 'session_timeout'
     await api.create_sessions(ms_tokens=[ms_token], num_sessions=1, sleep_after=3, headless=True, browser="chromium")
     app_state["api"] = api
     app_state["shazam"] = Shazam()
@@ -45,10 +44,39 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+async def resolve_short_url(url: str) -> str:
+    """
+    Разворачивает короткие ссылки TikTok (vt.tiktok.com, vm.tiktok.com) в полные.
+    """
+    if "vt.tiktok.com" in url or "vm.tiktok.com" in url:
+        logger.info(f"Обнаружен короткий URL: {url}. Определяем полный адрес...")
+        try:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                # Используем HEAD запрос, так как нам не нужно тело ответа, только конечный URL
+                response = await client.head(url, timeout=15.0)
+                full_url = str(response.url)
+                # Убираем все GET-параметры (все что после "?"), чтобы ссылка была чистой
+                clean_url = full_url.split("?")[0]
+                logger.info(f"URL успешно развернут в: {clean_url}")
+                return clean_url
+        except httpx.RequestError as e:
+            logger.error(f"Не удалось определить полный URL для {url}: {e}")
+            raise HTTPException(status_code=400, detail="Не удалось обработать короткую ссылку TikTok.")
+    return url
+
+
 @app.get("/video_data")
-async def get_video_data(url: str):
-    logger.info(f"Получен запрос для URL: {url}")
+async def get_video_data(original_url: str):
+    logger.info(f"Получен запрос для URL: {original_url}")
     temp_video_path = None
+    
+    try:
+        # --- ИЗМЕНЕНИЕ: Сначала разворачиваем URL ---
+        url = await resolve_short_url(original_url)
+    except HTTPException as e:
+        # Перехватываем ошибку из resolve_short_url и возвращаем ее клиенту
+        raise e
+
     async with app_state["lock"]:
         # Даем две попытки: первая - с текущей сессией, вторая - с новой.
         for attempt in range(2):
@@ -132,7 +160,6 @@ async def get_video_data(url: str):
                 if attempt == 0:
                     logger.info("Пересоздаем сессию TikTok API...")
                     await app_state["api"].close_sessions()
-                    # УБРАН НЕКОРРЕКТНЫЙ АРГУМЕНТ 'session_timeout'
                     await app_state["api"].create_sessions(ms_tokens=[ms_token], num_sessions=1, sleep_after=3, headless=True, browser="chromium")
                     logger.info("Сессия пересоздана. Повторяем запрос...")
                     continue
@@ -142,7 +169,11 @@ async def get_video_data(url: str):
             
             except Exception as e:
                 logger.error(f"Произошла критическая ошибка в Python API: {e}", exc_info=True)
-                raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера при обработке видео.")
+                # --- ИЗМЕНЕНИЕ: Проверяем, содержит ли ошибка TypeError от TikTokApi ---
+                if "URL format not supported" in str(e):
+                    raise HTTPException(status_code=400, detail="Неверный формат ссылки TikTok. Попробуйте другую ссылку.")
+                
+                raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {e}")
             
             finally:
                 if temp_video_path and os.path.exists(temp_video_path):
@@ -154,4 +185,5 @@ async def get_video_data(url: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=18361, workers=1)
+    # --- ИЗМЕНЕНИЕ: Убран параметр workers=1 для упрощения и совместимости ---
+    uvicorn.run("api:app", host="0.0.0.0", port=18361)
