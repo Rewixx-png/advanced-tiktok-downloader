@@ -6,9 +6,31 @@ const fs = require('fs');
 const path = require('path');
 
 // --- Конфигурация ---
-// API должен быть доступен по этому адресу. 127.0.0.1 - это localhost.
 const PYTHON_API_URL = 'http://127.0.0.1:18361/video_data';
 const TOKEN_PATH = path.join(__dirname, 'token.txt');
+
+// =================================================================
+//  НОВЫЙ БЛОК: СЛОВАРЬ ДЛЯ ПЕРЕВОДА КОДОВ СТРАН
+// =================================================================
+const countryCodes = {
+    'JP': 'Япония', 'US': 'США', 'RU': 'Россия', 'UA': 'Украина', 'BY': 'Беларусь',
+    'KZ': 'Казахстан', 'KR': 'Южная Корея', 'DE': 'Германия', 'FR': 'Франция',
+    'GB': 'Великобритания', 'BR': 'Бразилия', 'ID': 'Индонезия', 'VN': 'Вьетнам',
+    'TH': 'Таиланд', 'TR': 'Турция', 'PH': 'Филиппины', 'PL': 'Польша',
+    'IT': 'Италия', 'ES': 'Испания', 'CA': 'Канада', 'MX': 'Мексика',
+    'EG': 'Египет', 'SA': 'Саудовская Аравия', 'AE': 'ОАЭ', 'MY': 'Малайзия',
+    // Можно добавлять другие страны по мере необходимости
+};
+
+// Функция для получения полного названия страны. Если код не найден, вернет сам код.
+const getCountryName = (code) => {
+    if (!code) return null;
+    return countryCodes[code.toUpperCase()] || code; // .toUpperCase() для надежности
+};
+// =================================================================
+//  КОНЕЦ НОВОГО БЛОКА
+// =================================================================
+
 
 // --- Логирование для отладки ---
 const log = (message) => {
@@ -38,7 +60,6 @@ bot.on('message', async (msg) => {
 
     if (!text) return;
 
-    // Ищем ссылки на TikTok в тексте сообщения с помощью регулярного выражения
     const tiktokUrlRegex = /(https?:\/\/(?:www\.)?(?:m|vt|vm)\.tiktok\.com\/[^\s]+)/;
     const match = text.match(tiktokUrlRegex);
 
@@ -46,58 +67,62 @@ bot.on('message', async (msg) => {
         const tiktokUrl = match[0];
         log(`Обнаружена ссылка: ${tiktokUrl} в чате ${chatId}`);
 
-        // Отправляем пользователю сообщение о начале обработки
         const waitingMessage = await bot.sendMessage(chatId, '⏳ Подождите, обрабатываю ссылку...', {
             reply_to_message_id: msg.message_id
         });
 
         try {
-            // --- Вызов Python API ---
-            // ГЛАВНОЕ ИСПРАВЛЕНИЕ: используем параметр 'original_url', как ожидает API
             const response = await axios.get(PYTHON_API_URL, {
                 params: {
                     original_url: tiktokUrl
                 },
-                timeout: 120000 // Тайм-аут 2 минуты, так как API может работать долго
+                timeout: 120000 // Тайм-аут 2 минуты
             });
 
             const { metadata, videoBase64 } = response.data;
             log(`Получены данные от API для чата ${chatId}`);
-
-            // Формируем красивое описание для видео
+            
+            // --- Формирование подписи ---
             const stats = metadata.statistics;
             const videoDetails = metadata.video_details;
             const shazam = metadata.shazam;
 
-            let caption = `<b>Автор:</b> <a href="https://www.tiktok.com/@${metadata.author.uniqueId}">${metadata.author.nickname}</a>\n`;
+            let caption = `👤 <b>Автор:</b> <a href="https://www.tiktok.com/@${metadata.author.uniqueId}">@${metadata.author.uniqueId}</a>\n`;
+            
+            // ИСПРАВЛЕНО: Используем нашу новую функцию для перевода региона
+            const regionName = getCountryName(metadata.region);
+            if (regionName) {
+                caption += `📍 <b>Регион:</b> ${regionName}\n`;
+            }
+            caption += '\n';
+
             if (metadata.description) {
-                caption += `<b>Описание:</b> ${metadata.description}\n\n`;
+                caption += `📝 <b>Описание:</b>\n${metadata.description}\n\n`;
             }
 
-            caption += `<b>📊 Статистика:</b>\n`;
+            caption += `🎵 <b>Музыка:</b> ${metadata.music.title}\n`;
+            if (shazam && shazam.title) {
+                caption += `🎧 <b>Shazam:</b> ${shazam.artist} - ${shazam.title}\n`;
+            }
+
+            caption += `\n📊 <b>Статистика:</b>\n`;
             caption += `  ❤️ Лайки: ${stats.diggCount?.toLocaleString('ru-RU') || 0}\n`;
             caption += `  💬 Комментарии: ${stats.commentCount?.toLocaleString('ru-RU') || 0}\n`;
             caption += `  🔁 Репосты: ${stats.shareCount?.toLocaleString('ru-RU') || 0}\n`;
-            caption += `  ▶️ Просмотры: ${stats.playCount?.toLocaleString('ru-RU') || 0}\n\n`;
+            caption += `  ▶️ Просмотры: ${stats.playCount?.toLocaleString('ru-RU') || 0}\n`;
 
-            if (shazam && shazam.title) {
-                 caption += `<b>🎵 Музыка (Shazam):</b> ${shazam.artist} - ${shazam.title}\n`;
-            } else {
-                 caption += `<b>🎵 Музыка:</b> ${metadata.music.title} - ${metadata.music.authorName}\n`;
-            }
+            caption += `\n⚙️ <b>Видео:</b>\n`;
+            caption += `  Разрешение: ${videoDetails.resolution}\n`;
+            caption += `  FPS: ${videoDetails.fps}\n`;
+            caption += `  Размер: ${videoDetails.size_mb}`;
 
-            caption += `\n<b>⚙️ Детали видео:</b> ${videoDetails.resolution}, ${videoDetails.size_mb}`;
-
-            // Декодируем видео из base64
             const videoBuffer = Buffer.from(videoBase64, 'base64');
 
-            // Отправляем видео с подписью
             await bot.sendVideo(chatId, videoBuffer, {
                 caption: caption,
                 parse_mode: 'HTML'
             });
 
-            // Удаляем сообщение "Подождите..."
             await bot.deleteMessage(chatId, waitingMessage.message_id);
             log(`Видео успешно отправлено в чат ${chatId}`);
 
@@ -106,7 +131,6 @@ bot.on('message', async (msg) => {
             let errorMessage = 'Произошла неизвестная ошибка. 😥';
 
             if (error.response) {
-                // Ошибка пришла от API
                 log(`Ошибка от API: ${JSON.stringify(error.response.data, null, 2)}`);
                 const apiErrorDetail = error.response.data.detail;
                 if (typeof apiErrorDetail === 'string' && apiErrorDetail.includes("Неверный формат ссылки")) {
@@ -115,12 +139,10 @@ bot.on('message', async (msg) => {
                     errorMessage = 'Не удалось обработать видео. Возможно, оно приватное или удалено. 😥';
                 }
             } else {
-                // Сетевая ошибка или тайм-аут
                 log(`Сетевая ошибка или тайм-аут: ${error.message}`);
                  errorMessage = 'Сервер слишком долго отвечает. Попробуйте позже.';
             }
-
-            // Редактируем сообщение об ожидании на сообщение об ошибке
+            
             await bot.editMessageText(errorMessage, {
                 chat_id: chatId,
                 message_id: waitingMessage.message_id
