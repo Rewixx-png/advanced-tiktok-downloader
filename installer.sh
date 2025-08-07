@@ -62,7 +62,7 @@ sleep 1
 print_header "Шаг 2: Установка правильной версии Node.js"
 print_info "Удаляем старые версии Node.js, чтобы избежать конфликтов..."
 apt-get purge -y nodejs npm
-apt-get autoremove -y
+apt-get autoremove -y > /dev/null 2>&1
 print_info "Добавляем репозиторий NodeSource для Node.js v20.x..."
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 print_info "Устанавливаем Node.js..."
@@ -73,15 +73,16 @@ sleep 1
 
 # --- ШАГ 3: КЛОНИРОВАНИЕ РЕПОЗИТОРИЯ ---
 print_header "Шаг 3: Клонирование проекта с GitHub"
-if [ -d "advanced-tiktok-downloader" ]; then
-    print_warning "Папка 'advanced-tiktok-downloader' уже существует. Пропускаем клонирование."
+REPO_DIR="advanced-tiktok-downloader"
+if [ -d "$REPO_DIR" ]; then
+    print_warning "Папка '$REPO_DIR' уже существует. Пропускаем клонирование."
 else
     print_info "Клонируем репозиторий..."
     git clone https://github.com/Rewixx-png/advanced-tiktok-downloader.git
     print_success "Репозиторий успешно склонирован."
 fi
-cd advanced-tiktok-downloader || exit
-PROJECT_DIR=$(pwd)
+# Определяем абсолютный путь к проекту для надежности
+PROJECT_DIR="$(pwd)/$REPO_DIR"
 sleep 1
 
 # --- ШАГ 4: ЗАПРАШИВАЕМ ТОКЕНЫ У ПОЛЬЗОВАТЕЛЯ ---
@@ -113,7 +114,13 @@ print_header "Шаг 5: Настройка Python API"
 print_info "Устанавливаем зависимости для Python..."
 pip install -r "$PROJECT_DIR/python_api/requirements.txt"
 print_info "Скачиваем браузер для Playwright (это может занять некоторое время)..."
-python3 -m playwright install chromium
+# Запускаем от имени обычного пользователя, если скрипт запущен через sudo
+# Это решает некоторые проблемы с правами доступа при скачивании
+if [ -n "$SUDO_USER" ]; then
+    sudo -u "$SUDO_USER" python3 -m playwright install chromium
+else
+    python3 -m playwright install chromium
+fi
 print_info "Создаем файл конфигурации .env..."
 echo "MS_TOKEN=$MS_TOKEN" > "$PROJECT_DIR/python_api/.env"
 print_success "Python API настроен!"
@@ -122,11 +129,9 @@ sleep 1
 # --- ШАГ 6: НАСТРОЙКА NODE.JS БОТА ---
 print_header "Шаг 6: Настройка Node.js бота"
 print_info "Устанавливаем зависимости для Node.js..."
-cd "$PROJECT_DIR/nodejs_bot"
-npm install
+npm --prefix "$PROJECT_DIR/nodejs_bot" install
 print_info "Создаем файл с токеном..."
-echo "$TELEGRAM_TOKEN" > token.txt
-cd "$PROJECT_DIR"
+echo "$TELEGRAM_TOKEN" > "$PROJECT_DIR/nodejs_bot/token.txt"
 print_success "Node.js бот настроен!"
 sleep 1
 
@@ -135,12 +140,11 @@ print_header "Шаг 7: Установка и запуск через PM2"
 print_info "Устанавливаем менеджер процессов PM2..."
 npm install -g pm2
 
-# ИСПРАВЛЕНИЕ: Обновляем PATH, чтобы система сразу нашла pm2
-export PATH=$(npm bin -g):$PATH
-
 print_info "Запускаем Python API и Node.js бота..."
+# Используем --cwd, чтобы указать рабочую директорию, это надежнее чем cd
 pm2 start "$PROJECT_DIR/python_api/api.py" --name "tiktok-api" --interpreter python3
 pm2 start "$PROJECT_DIR/nodejs_bot/bot.js" --name "tiktok-bot"
+
 print_info "Сохраняем процессы для автозапуска..."
 pm2 save
 print_success "Бот и API успешно запущены через PM2!"
@@ -159,10 +163,11 @@ echo -e "  ${CYAN}pm2 logs tiktok-api${NC} - Посмотреть логи Pytho
 echo -e "  ${CYAN}pm2 restart all${NC}     - Перезапустить бота и API."
 echo -e "  ${CYAN}pm2 stop all${NC}        - Остановить бота и API."
 echo ""
-print_warning "ВАЖНЫЙ ПОСЛЕДНИЙ ШАГ: Автозапуск после перезагрузки сервера."
-print_info "Чтобы бот запускался сам после перезагрузки сервера, вам нужно один раз выполнить команду, которую сгенерирует PM2."
-print_info "Скопируйте команду ниже и выполните ее в терминале:"
+print_warning "ВАЖНЫЙ ПОСЛЕДНИЙ ШАГ: Настройка автозапуска после перезагрузки сервера."
+print_info "Чтобы бот запускался сам после перезагрузки, вам нужно ОДИН РАЗ выполнить команду, которую сгенерирует PM2."
+print_info "Скопируйте команду, которая появится ниже, и выполните ее в терминале:"
 echo ""
+# Захватываем команду автозапуска и выводим ее пользователю в явном виде
 STARTUP_COMMAND=$(pm2 startup | tail -n 1)
 echo -e "${GREEN}${STARTUP_COMMAND}${NC}"
 echo ""

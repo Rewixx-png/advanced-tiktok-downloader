@@ -1,159 +1,130 @@
+// nodejs_bot/bot.js
+
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
-// --- НАСТРОЙКИ ---
+// --- Конфигурация ---
+// API должен быть доступен по этому адресу. 127.0.0.1 - это localhost.
+const PYTHON_API_URL = 'http://127.0.0.1:18361/video_data';
+const TOKEN_PATH = path.join(__dirname, 'token.txt');
 
-const tokenPath = path.join(__dirname, 'token.txt');
-if (!fs.existsSync(tokenPath)) {
-    console.error('Ошибка: Файл token.txt не найден! Пожалуйста, создайте его и вставьте туда токен вашего бота.');
+// --- Логирование для отладки ---
+const log = (message) => {
+    console.log(`[${new Date().toLocaleString('ru-RU')}] ${message}`);
+};
+
+// --- Проверка и чтение токена ---
+if (!fs.existsSync(TOKEN_PATH)) {
+    log('Критическая ошибка: Файл token.txt не найден!');
+    log('Пожалуйста, создайте файл token.txt в папке nodejs_bot и поместите в него токен вашего Telegram-бота.');
     process.exit(1);
 }
-const token = fs.readFileSync(tokenPath, 'utf8').trim();
+const token = fs.readFileSync(TOKEN_PATH, 'utf8').trim();
+if (!token) {
+    log('Критическая ошибка: Файл token.txt пуст!');
+    process.exit(1);
+}
 
-const API_URL = 'http://127.0.0.1:18361/video_data';
-
-// --- ИНИЦИАЛИЗАЦИЯ БОТА ---
-
+// --- Инициализация бота ---
 const bot = new TelegramBot(token, { polling: true });
-console.log('Бот успешно запущен и готов к работе!');
+log('Бот успешно запущен и готов к работе!');
 
-// --- ИЗМЕНЕНИЕ И УЛУЧШЕНИЕ: Универсальное регулярное выражение для ВСЕХ ссылок ---
-const TIKTOK_URL_REGEX = /https?:\/\/(?:[a-zA-Z]{2,3}\.)?tiktok\.com\/((?:@[-a-zA-Z0-9._]{1,256}\/video\/[0-9]+)|(?:t\/[a-zA-Z0-9]+)|(?:[a-zA-Z0-9]{9,}))\/?/g;
-
-
-// --- ОСНОВНАЯ ЛОГИКА ---
-
+// --- Основной обработчик сообщений ---
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
 
     if (!text) return;
-    
-    // Сбрасываем состояние regex перед каждым новым поиском
-    TIKTOK_URL_REGEX.lastIndex = 0; 
-    const match = TIKTOK_URL_REGEX.exec(text);
-    
-    if (!match) return;
 
-    const tiktokUrl = match[0];
-    console.log(`[${new Date().toLocaleString()}] Обнаружена ссылка: ${tiktokUrl} в чате ${chatId}`);
+    // Ищем ссылки на TikTok в тексте сообщения с помощью регулярного выражения
+    const tiktokUrlRegex = /(https?:\/\/(?:www\.)?(?:m|vt|vm)\.tiktok\.com\/[^\s]+)/;
+    const match = text.match(tiktokUrlRegex);
 
-    let processingMessage;
-    try {
-        processingMessage = await bot.sendMessage(chatId, '⏳ Обрабатываю запрос...', {
+    if (match && match[0]) {
+        const tiktokUrl = match[0];
+        log(`Обнаружена ссылка: ${tiktokUrl} в чате ${chatId}`);
+
+        // Отправляем пользователю сообщение о начале обработки
+        const waitingMessage = await bot.sendMessage(chatId, '⏳ Подождите, обрабатываю ссылку...', {
             reply_to_message_id: msg.message_id
         });
 
-        const response = await axios.get(API_URL, {
-            params: { url: tiktokUrl },
-            timeout: 180000 
-        });
-        
-        const { metadata, videoBase64 } = response.data;
+        try {
+            // --- Вызов Python API ---
+            // ГЛАВНОЕ ИСПРАВЛЕНИЕ: используем параметр 'original_url', как ожидает API
+            const response = await axios.get(PYTHON_API_URL, {
+                params: {
+                    original_url: tiktokUrl
+                },
+                timeout: 120000 // Тайм-аут 2 минуты, так как API может работать долго
+            });
 
-        if (!videoBase64) {
-            throw new Error('API did not return video data.');
+            const { metadata, videoBase64 } = response.data;
+            log(`Получены данные от API для чата ${chatId}`);
+
+            // Формируем красивое описание для видео
+            const stats = metadata.statistics;
+            const videoDetails = metadata.video_details;
+            const shazam = metadata.shazam;
+
+            let caption = `<b>Автор:</b> <a href="https://www.tiktok.com/@${metadata.author.uniqueId}">${metadata.author.nickname}</a>\n`;
+            if (metadata.description) {
+                caption += `<b>Описание:</b> ${metadata.description}\n\n`;
+            }
+
+            caption += `<b>📊 Статистика:</b>\n`;
+            caption += `  ❤️ Лайки: ${stats.diggCount?.toLocaleString('ru-RU') || 0}\n`;
+            caption += `  💬 Комментарии: ${stats.commentCount?.toLocaleString('ru-RU') || 0}\n`;
+            caption += `  🔁 Репосты: ${stats.shareCount?.toLocaleString('ru-RU') || 0}\n`;
+            caption += `  ▶️ Просмотры: ${stats.playCount?.toLocaleString('ru-RU') || 0}\n\n`;
+
+            if (shazam && shazam.title) {
+                 caption += `<b>🎵 Музыка (Shazam):</b> ${shazam.artist} - ${shazam.title}\n`;
+            } else {
+                 caption += `<b>🎵 Музыка:</b> ${metadata.music.title} - ${metadata.music.authorName}\n`;
+            }
+
+            caption += `\n<b>⚙️ Детали видео:</b> ${videoDetails.resolution}, ${videoDetails.size_mb}`;
+
+            // Декодируем видео из base64
+            const videoBuffer = Buffer.from(videoBase64, 'base64');
+
+            // Отправляем видео с подписью
+            await bot.sendVideo(chatId, videoBuffer, {
+                caption: caption,
+                parse_mode: 'HTML'
+            });
+
+            // Удаляем сообщение "Подождите..."
+            await bot.deleteMessage(chatId, waitingMessage.message_id);
+            log(`Видео успешно отправлено в чат ${chatId}`);
+
+        } catch (error) {
+            log(`Произошла ошибка при обработке ссылки для чата ${chatId}`);
+            let errorMessage = 'Произошла неизвестная ошибка. 😥';
+
+            if (error.response) {
+                // Ошибка пришла от API
+                log(`Ошибка от API: ${JSON.stringify(error.response.data, null, 2)}`);
+                const apiErrorDetail = error.response.data.detail;
+                if (typeof apiErrorDetail === 'string' && apiErrorDetail.includes("Неверный формат ссылки")) {
+                    errorMessage = 'Это не похоже на рабочую ссылку на TikTok. Попробуйте другую.';
+                } else {
+                    errorMessage = 'Не удалось обработать видео. Возможно, оно приватное или удалено. 😥';
+                }
+            } else {
+                // Сетевая ошибка или тайм-аут
+                log(`Сетевая ошибка или тайм-аут: ${error.message}`);
+                 errorMessage = 'Сервер слишком долго отвечает. Попробуйте позже.';
+            }
+
+            // Редактируем сообщение об ожидании на сообщение об ошибке
+            await bot.editMessageText(errorMessage, {
+                chat_id: chatId,
+                message_id: waitingMessage.message_id
+            });
         }
-
-        const videoBuffer = Buffer.from(videoBase64, 'base64');
-        const caption = formatCaption(metadata);
-
-        await bot.sendVideo(chatId, videoBuffer, {
-            caption: caption,
-            parse_mode: 'Markdown'
-        });
-
-    } catch (error) {
-        let errorMessage = 'Произошла ошибка. Не удалось скачать видео. 😞';
-        if (error.message === 'API did not return video data.') {
-            errorMessage = 'Ошибка на сервере: не удалось получить файл видео. Попробуйте позже.';
-        } else if (error.response) {
-            errorMessage = 'Сервер обработки видео вернул ошибку. Возможно, видео недоступно.';
-            console.error(`[${new Date().toLocaleString()}] Ошибка от API:`, error.response.data);
-        } else {
-            console.error(`[${new Date().toLocaleString()}] Ошибка при обработке ${tiktokUrl}:`, error.message);
-        }
-        
-        await bot.sendMessage(chatId, errorMessage, {
-             reply_to_message_id: msg.message_id
-        });
-    } finally {
-        if (processingMessage) {
-            await bot.deleteMessage(chatId, processingMessage.message_id);
-        }
     }
-});
-
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-
-function formatCaption(metadata) {
-    const { author, description, music, statistics, region, shazam, video_details } = metadata;
-    const stats = statistics || {};
-
-    const safeAuthorId = escapeMarkdown(author.uniqueId || 'Неизвестен');
-    const safeDescription = escapeMarkdown(description || '');
-    const safeMusicTitle = escapeMarkdown(music.title || 'Оригинальный звук');
-
-    const authorLine = `👤 *Автор:* @${safeAuthorId}`;
-    const regionLine = region ? `\n📍 *Регион:* ${getCountryName(region)}` : '';
-    const descriptionLine = safeDescription ? `\n\n📝 *Описание:*\n${safeDescription}` : '';
-    const musicLine = `\n\n🎵 *Музыка:* ${safeMusicTitle}`;
-    
-    let shazamLine = '';
-    if (shazam && shazam.title) {
-        const safeShazamTitle = escapeMarkdown(shazam.title);
-        const safeShazamArtist = escapeMarkdown(shazam.artist);
-        shazamLine = `\n🎧 *Shazam:* ${safeShazamTitle} - ${safeShazamArtist}`;
-    }
-
-    const statsLine = `\n\n*📊 Статистика:*\n` +
-        `❤️ Лайки: ${formatNumber(stats.diggCount || 0)}\n` +
-        `💬 Комментарии: ${formatNumber(stats.commentCount || 0)}\n` +
-        `🔁 Репосты: ${formatNumber(stats.shareCount || 0)}\n` +
-        `▶️ Просмотры: ${formatNumber(stats.playCount || 0)}`;
-
-    let videoDetailsLine = '';
-    if (video_details) {
-        videoDetailsLine = `\n\n*⚙️ Видео:*\n` +
-            `Разрешение: ${video_details.resolution}\n` +
-            `FPS: ${video_details.fps}\n` +
-            `Размер: ${video_details.size_mb}`;
-    }
-
-    return `${authorLine}${regionLine}${descriptionLine}${musicLine}${shazamLine}${statsLine}${videoDetailsLine}`;
-}
-
-
-function formatNumber(num) {
-    if (num >= 1000000) {
-        return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
-    }
-    if (num >= 1000) {
-        return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
-    }
-    return String(num);
-}
-
-function escapeMarkdown(text) {
-    if (typeof text !== 'string') return '';
-    return text.replace(/([_*`\[])/g, '\\$1');
-}
-
-function getCountryName(code) {
-    const countryCodes = {
-        'JP': 'Япония', 'US': 'США', 'RU': 'Россия', 'KR': 'Южная Корея',
-        'GB': 'Великобритания', 'DE': 'Германия', 'FR': 'Франция', 'IT': 'Италия',
-        'ES': 'Испания', 'CA': 'Канада', 'AU': 'Австралия', 'BR': 'Бразилия',
-        'IN': 'Индия', 'ID': 'Индонезия', 'MX': 'Мексика', 'TR': 'Турция',
-        'VN': 'Вьетнам', 'TH': 'Таиланд', 'PH': 'Филиппины', 'MY': 'Малайзия',
-        'UA': 'Украина', 'KZ': 'Казахстан', 'BY': 'Беларусь', 'PL': 'Польша',
-        'NL': 'Нидерланды', 'SE': 'Швеция', 'CN': 'Китай'
-    };
-    return countryCodes[String(code).toUpperCase()] || code;
-}
-
-bot.on('polling_error', (error) => {
-    console.error(`[Polling Error] ${error.code}: ${error.message}`);
 });
