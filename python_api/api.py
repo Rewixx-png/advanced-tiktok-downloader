@@ -9,9 +9,9 @@ import logging
 import base64
 import httpx
 import tempfile
-import cv2 # OpenCV для анализа видео
-from shazamio import Shazam # ShazamIO для распознавания музыки
-from playwright._impl._errors import TargetClosedError # <--- Импорт для отлова ошибки сессии
+import cv2
+from shazamio import Shazam
+from playwright._impl._errors import TargetClosedError
 
 # --- Настройка ---
 logging.basicConfig(level=logging.INFO)
@@ -27,43 +27,36 @@ app_state = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # --- КОД ВЫПОЛНЯЕТСЯ ОДИН РАЗ ПРИ СТАРТЕ ---
-    logger.info("Запускаем TikTok API и создаем сессию... Это может занять до минуты.")
-    api = TikTokApi()
-    await api.create_sessions(ms_tokens=[ms_token], num_sessions=1, sleep_after=3, headless=True, browser="chromium")
+    logger.info("Запускаем TikTok API и создаем сессию...")
+    api = TikTokApi() # Простое создание объекта, как было раньше
+    await api.create_sessions(
+        ms_tokens=[ms_token],
+        num_sessions=1,
+        sleep_after=3,
+        headless=True,
+        browser="chromium"
+    )
+    
     app_state["api"] = api
     app_state["shazam"] = Shazam()
     app_state["lock"] = asyncio.Lock()
     logger.info(">>> Python API готов к приему запросов! <<<")
     yield
-    # --- КОД ВЫПОЛНЯЕТСЯ ПРИ ОСТАНОВКЕ ---
     logger.info("Закрываем сессию TikTok API...")
     if "api" in app_state and app_state["api"]:
          await app_state["api"].close_sessions()
 
-
 app = FastAPI(lifespan=lifespan)
 
 async def resolve_short_url(url: str) -> str:
-    """
-    Разворачивает короткие ссылки TikTok (vt.tiktok.com, vm.tiktok.com) в полные.
-    """
     if "vt.tiktok.com" in url or "vm.tiktok.com" in url:
-        logger.info(f"Обнаружен короткий URL: {url}. Определяем полный адрес...")
         try:
             async with httpx.AsyncClient(follow_redirects=True) as client:
-                # Используем HEAD запрос, так как нам не нужно тело ответа, только конечный URL
                 response = await client.head(url, timeout=15.0)
-                full_url = str(response.url)
-                # Убираем все GET-параметры (все что после "?"), чтобы ссылка была чистой
-                clean_url = full_url.split("?")[0]
-                logger.info(f"URL успешно развернут в: {clean_url}")
-                return clean_url
-        except httpx.RequestError as e:
-            logger.error(f"Не удалось определить полный URL для {url}: {e}")
+                return str(response.url).split("?")[0]
+        except httpx.RequestError:
             raise HTTPException(status_code=400, detail="Не удалось обработать короткую ссылку TikTok.")
     return url
-
 
 @app.get("/video_data")
 async def get_video_data(original_url: str):
@@ -71,27 +64,20 @@ async def get_video_data(original_url: str):
     temp_video_path = None
     
     try:
-        # --- ИЗМЕНЕНИЕ: Сначала разворачиваем URL ---
         url = await resolve_short_url(original_url)
     except HTTPException as e:
-        # Перехватываем ошибку из resolve_short_url и возвращаем ее клиенту
         raise e
 
     async with app_state["lock"]:
-        # Даем две попытки: первая - с текущей сессией, вторая - с новой.
         for attempt in range(2):
             try:
                 api = app_state["api"]
-                
                 video_obj = api.video(url=url)
-                video_data = await video_obj.info()
+                video_data = await video_obj.info(use_video_v2=True)
                 
                 no_watermark_url = video_data.get("video", {}).get("playAddr")
-
                 if not no_watermark_url:
-                    raise HTTPException(status_code=404, detail="URL для скачивания без водяного знака не найден.")
-
-                logger.info(f"Скачивание видео с URL: {no_watermark_url}")
+                    raise HTTPException(status_code=404, detail="URL для скачивания не найден.")
 
                 _, session = api._get_session()
                 cookies = await api.get_session_cookies(session)
@@ -102,88 +88,49 @@ async def get_video_data(original_url: str):
                     response.raise_for_status()
                     video_bytes = response.content
                 
-                logger.info("Видео успешно скачано.")
-                
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_file:
                     temp_video_path = temp_file.name
                     temp_file.write(video_bytes)
                 
-                logger.info(f"Анализ видеофайла: {temp_video_path}")
                 cap = cv2.VideoCapture(temp_video_path)
-                fps = cap.get(cv2.CAP_PROP_FPS)
-                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                video_details = {"resolution": f"{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}", "fps": round(cap.get(cv2.CAP_PROP_FPS)), "size_mb": f"{os.path.getsize(temp_video_path) / (1024 * 1024):.2f} MB"}
                 cap.release()
 
-                video_size_mb = os.path.getsize(temp_video_path) / (1024 * 1024)
-                video_details = {
-                    "resolution": f"{width}x{height}",
-                    "fps": round(fps),
-                    "size_mb": f"{video_size_mb:.2f} MB"
-                }
-                logger.info(f"Детали видео: {video_details}")
-
-                logger.info("Распознавание музыки через Shazam...")
                 shazam_result = None
                 try:
-                    shazam = app_state["shazam"]
-                    recognition_result = await shazam.recognize(temp_video_path)
+                    recognition_result = await app_state["shazam"].recognize(temp_video_path)
                     if recognition_result.get('track'):
-                        shazam_result = {
-                            "artist": recognition_result['track'].get('subtitle', 'Неизвестен'),
-                            "title": recognition_result['track'].get('title', 'Неизвестно')
-                        }
-                        logger.info(f"Shazam нашел трек: {shazam_result['title']} - {shazam_result['artist']}")
-                    else:
-                        logger.info("Shazam не смог распознать трек.")
+                        shazam_result = {"artist": recognition_result['track'].get('subtitle', 'Неизвестен'), "title": recognition_result['track'].get('title', 'Неизвестно')}
                 except Exception as e:
-                    logger.error(f"Ошибка при распознавании Shazam: {e}")
+                    logger.error(f"Ошибка Shazam: {e}")
 
-                metadata = {
-                    "author": video_data.get('author', {}),
-                    "music": video_data.get('music', {}),
-                    "description": video_data.get('desc'),
-                    "statistics": video_data.get('statsV2', video_data.get('stats', {})),
-                    "region": video_data.get('locationCreated'),
-                    "video_details": video_details,
-                    "shazam": shazam_result
-                }
+                challenges = video_data.get('challenges', [])
+                hashtags = [f"#{challenge.get('title')}" for challenge in challenges if challenge.get('title')]
+                metadata = {"author": video_data.get('author', {}), "music": video_data.get('music', {}), "description": video_data.get('desc'), "statistics": video_data.get('statsV2', video_data.get('stats', {})), "region": video_data.get('locationCreated'), "video_details": video_details, "shazam": shazam_result, "authorStats": video_data.get('authorStats', {}), "createTime": video_data.get('createTime'), "video_duration": video_data.get('video', {}).get('duration'), "hashtags": hashtags, "isDuet": bool(video_data.get('duetInfo')), "isStitch": bool(video_data.get('stitchInfo')), "video_id": video_data.get('id')}
 
                 video_base64 = base64.b64encode(video_bytes).decode('utf-8')
-                final_response = { "metadata": metadata, "videoBase64": video_base64 }
-                
-                logger.info("Данные и видео успешно упакованы для отправки.")
-                return JSONResponse(content=final_response)
+                return JSONResponse(content={"metadata": metadata, "videoBase64": video_base64})
 
             except TargetClosedError as e:
-                logger.warning(f"Контекст браузера был закрыт (Попытка {attempt + 1}/2). Ошибка: {e}")
+                logger.warning(f"Контекст браузера закрыт (Попытка {attempt + 1}/2): {e}")
                 if attempt == 0:
-                    logger.info("Пересоздаем сессию TikTok API...")
                     await app_state["api"].close_sessions()
-                    await app_state["api"].create_sessions(ms_tokens=[ms_token], num_sessions=1, sleep_after=3, headless=True, browser="chromium")
-                    logger.info("Сессия пересоздана. Повторяем запрос...")
+                    new_api = TikTokApi()
+                    await new_api.create_sessions(ms_tokens=[ms_token], num_sessions=1, sleep_after=3, headless=True)
+                    app_state["api"] = new_api
                     continue
-                else:
-                    logger.error("Не удалось выполнить запрос даже после перезапуска сессии.")
-                    raise HTTPException(status_code=500, detail="Внутренняя ошибка: сессия с TikTok нестабильна.")
+                raise HTTPException(status_code=500, detail="Сессия с TikTok нестабильна.")
             
             except Exception as e:
-                logger.error(f"Произошла критическая ошибка в Python API: {e}", exc_info=True)
-                # --- ИЗМЕНЕНИЕ: Проверяем, содержит ли ошибка TypeError от TikTokApi ---
+                logger.error(f"Критическая ошибка в /video_data: {e}", exc_info=True)
                 if "URL format not supported" in str(e):
-                    raise HTTPException(status_code=400, detail="Неверный формат ссылки TikTok. Попробуйте другую ссылку.")
-                
-                raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {e}")
+                    raise HTTPException(status_code=400, detail="Неверный формат ссылки TikTok.")
+                raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера.")
             
             finally:
                 if temp_video_path and os.path.exists(temp_video_path):
                     os.unlink(temp_video_path)
-                    logger.info(f"Временный файл {temp_video_path} удален.")
-        
-        raise HTTPException(status_code=500, detail="Произошла непредвиденная ошибка в логике обработки запроса.")
-
 
 if __name__ == "__main__":
     import uvicorn
-    # --- ИЗМЕНЕНИЕ: Убран параметр workers=1 для упрощения и совместимости ---
     uvicorn.run("api:app", host="0.0.0.0", port=18361)
