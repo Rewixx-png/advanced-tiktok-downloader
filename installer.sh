@@ -1,35 +1,38 @@
 #!/bin/bash
 
 # =================================================================
-#      Advanced TikTok Downloader - Универсальный установщик
+#      Advanced TikTok Downloader - "Тихий" установщик v3.0
 # =================================================================
-# Этот скрипт автоматически установит и настроит все компоненты
-# бота, включая Python API, Node.js бота, менеджер процессов PM2
-# и задачу автоматической очистки кэша.
-#
-# Запускать на чистых системах Ubuntu/Debian.
+# Скрипт показывает только ключевые этапы установки. Детальный
+# вывод скрыт, но будет показан автоматически в случае ошибки.
 # =================================================================
 
 # --- Вспомогательные функции для красивого вывода ---
-print_info() {
-    # Синий цвет для информационных сообщений
-    echo -e "\e[34mINFO:\e[0m $1"
-}
+print_info() { echo -e "\e[34mINFO:\e[0m $1"; }
+print_success() { echo -e "\e[32mSUCCESS:\e[0m $1"; }
+print_warning() { echo -e "\e[33mWARNING:\e[0m $1"; }
+print_error() { echo -e "\e[31mERROR:\e[0m $1"; }
 
-print_success() {
-    # Зеленый цвет для сообщений об успехе
-    echo -e "\e[32mSUCCESS:\e[0m $1"
-}
+# --- Лог-файл для скрытого вывода ---
+LOG_FILE="/tmp/tiktok_installer.log"
+# Очищаем лог-файл перед началом
+> "$LOG_FILE"
 
-print_warning() {
-    # Желтый цвет для предупреждений
-    echo -e "\e[33mWARNING:\e[0m $1"
-}
+# --- Функция для тихого выполнения команд ---
+# Выполняет команду, скрывая ее вывод. В случае ошибки, показывает лог.
+run_silent() {
+    local message="$1"
+    shift
+    local command_to_run="$@"
 
-print_error() {
-    # Красный цвет для ошибок
-    echo -e "\e[31mERROR:\e[0m $1"
-    exit 1
+    # Выполняем команду, перенаправляя весь вывод в лог-файл
+    if ! eval "$command_to_run" >> "$LOG_FILE" 2>&1; then
+        print_error "$message"
+        echo "---------------------- ДЕТАЛЬНЫЙ ЛОГ ОШИБКИ ----------------------"
+        cat "$LOG_FILE"
+        echo "-----------------------------------------------------------------"
+        exit 1
+    fi
 }
 
 # --- 1. Проверка прав суперпользователя ---
@@ -38,62 +41,52 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 clear
-print_info "Добро пожаловать в установщик Advanced TikTok Downloader!"
+print_info "Добро пожаловать в 'тихий' установщик Advanced TikTok Downloader v3.0!"
 echo "--------------------------------------------------"
 
 # --- 2. Запрос необходимых данных у пользователя ---
 read -p "Введите ваш токен для Telegram-бота от @BotFather: " TELEGRAM_TOKEN
-if [ -z "$TELEGRAM_TOKEN" ]; then
-    print_error "Токен Telegram не может быть пустым."
-fi
+if [ -z "$TELEGRAM_TOKEN" ]; then print_error "Токен Telegram не может быть пустым."; fi
 
 read -p "Введите ваш ms_token для TikTok (инструкция в README): " MS_TOKEN
-if [ -z "$MS_TOKEN" ]; then
-    print_error "ms_token не может быть пустым."
-fi
+if [ -z "$MS_TOKEN" ]; then print_error "ms_token не может быть пустым."; fi
 echo "--------------------------------------------------"
 
 # --- 3. Установка системных зависимостей ---
 print_info "Обновляем списки пакетов apt..."
-apt-get update -y
+run_silent "Не удалось обновить списки пакетов." "apt-get update -y"
 
 print_info "Устанавливаем системные зависимости (git, python3, pip, curl, ffmpeg)..."
-# ffmpeg ОБЯЗАТЕЛЕН для скачивания аудио из YouTube с помощью yt-dlp
-apt-get install -y git python3 python3-pip curl ffmpeg
+run_silent "Не удалось установить системные зависимости." "apt-get install -y git python3 python3-pip curl ffmpeg"
 
 # --- 4. Установка Node.js 20.x ---
 print_info "Устанавливаем Node.js v20.x..."
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt-get install -y nodejs
+run_silent "Не удалось добавить репозиторий Node.js." "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -"
+run_silent "Не удалось установить Node.js." "apt-get install -y nodejs"
 
 # --- 5. Клонирование репозитория ---
-# Определяем директорию проекта в домашней папке пользователя, который запустил sudo
-PROJECT_DIR="${SUDO_USER:-$(whoami)}/advanced-tiktok-downloader"
-PROJECT_DIR_FULL_PATH="/home/$PROJECT_DIR"
+ORIGINAL_USER="${SUDO_USER:-$(whoami)}"
+PROJECT_DIR_FULL_PATH="/home/$ORIGINAL_USER/advanced-tiktok-downloader"
 
 if [ -d "$PROJECT_DIR_FULL_PATH" ]; then
     print_warning "Директория проекта уже существует. Пропускаем клонирование."
 else
     print_info "Клонируем репозиторий в $PROJECT_DIR_FULL_PATH..."
-    # Клонируем от имени пользователя, а не от root
-    sudo -u "${SUDO_USER:-$(whoami)}" git clone https://github.com/Rewixx-png/advanced-tiktok-downloader.git "$PROJECT_DIR_FULL_PATH" || print_error "Не удалось клонировать репозиторий."
+    run_silent "Не удалось клонировать репозиторий." "sudo -u \"$ORIGINAL_USER\" git clone https://github.com/Rewixx-png/advanced-tiktok-downloader.git \"$PROJECT_DIR_FULL_PATH\""
 fi
 cd "$PROJECT_DIR_FULL_PATH" || print_error "Не удалось перейти в директорию проекта."
 
 # --- 6. Настройка Python API ---
 print_info "Настраиваем Python API..."
 cd python_api/ || print_error "Не найдена папка python_api."
-
-print_info "Создаем необходимые папки: audio_files и video_cache..."
 mkdir -p audio_files video_cache
 
 print_info "Устанавливаем Python-библиотеки (это может занять некоторое время)..."
-# Устанавливаем все зависимости, включая новые для кэширования и скачивания музыки
-pip install --upgrade pip
-pip install TikTokApi fastapi "uvicorn[standard]" python-dotenv playwright httpx shazamio opencv-python-headless yt-dlp youtube-search-python aiosqlite || print_error "Не удалось установить Python-библиотеки."
+run_silent "Не удалось установить Python-библиотеки." "pip install --upgrade pip"
+run_silent "Не удалось установить Python-библиотеки." "pip install TikTokApi fastapi \"uvicorn[standard]\" python-dotenv playwright httpx shazamio opencv-python-headless yt-dlp youtube-search-python aiosqlite"
 
 print_info "Скачиваем браузер для Playwright (это может занять несколько минут)..."
-python3 -m playwright install chromium || print_error "Не удалось установить браузер для Playwright."
+run_silent "Не удалось установить браузер для Playwright." "python3 -m playwright install chromium"
 
 print_info "Создаем файл конфигурации .env..."
 echo "MS_TOKEN=$MS_TOKEN" > .env
@@ -103,7 +96,7 @@ print_info "Настраиваем Node.js бота..."
 cd ../nodejs_bot/ || print_error "Не найдена папка nodejs_bot."
 
 print_info "Устанавливаем Node.js зависимости..."
-npm install || print_error "Не удалось установить Node.js зависимости."
+run_silent "Не удалось установить Node.js зависимости." "npm install"
 
 print_info "Создаем файл с токеном Telegram..."
 echo "$TELEGRAM_TOKEN" > token.txt
@@ -111,34 +104,33 @@ echo "$TELEGRAM_TOKEN" > token.txt
 # --- 8. Настройка PM2 для автозапуска ---
 print_info "Настраиваем менеджер процессов PM2..."
 cd .. # Возвращаемся в корень проекта
-npm install -g pm2 || print_error "Не удалось установить PM2."
+run_silent "Не удалось установить PM2." "npm install -g pm2"
 
-print_info "Запускаем процессы через PM2..."
-# Запускаем от имени пользователя, чтобы избежать проблем с правами
-sudo -u "${SUDO_USER:-$(whoami)}" pm2 start python_api/api.py --name "tiktok-api" --interpreter python3
-sudo -u "${SUDO_USER:-$(whoami)}" pm2 start nodejs_bot/bot.js --name "tiktok-bot"
+print_info "Останавливаем и удаляем любые старые версии процессов..."
+# Используем `|| true`, чтобы скрипт не падал, если процессов еще не существует
+run_silent "Не удалось остановить старые процессы." "pm2 stop tiktok-api || true; pm2 delete tiktok-api || true; pm2 stop tiktok-bot || true; pm2 delete tiktok-bot || true"
+
+print_info "Запускаем процессы через PM2 от имени пользователя '$ORIGINAL_USER'..."
+run_silent "Не удалось запустить процессы." "sudo -u \"$ORIGINAL_USER\" pm2 start python_api/api.py --name \"tiktok-api\" --interpreter python3 && sudo -u \"$ORIGINAL_USER\" pm2 start nodejs_bot/bot.js --name \"tiktok-bot\""
 
 print_info "Сохраняем процессы для автозапуска после перезагрузки..."
-sudo -u "${SUDO_USER:-$(whoami)}" pm2 save
-# Генерируем и выполняем команду для автозапуска PM2
-env PATH=$PATH:/usr/bin pm2 startup systemd -u "${SUDO_USER:-$(whoami)}" --hp "/home/${SUDO_USER:-$(whoami)}" | tail -n 1 | bash
+run_silent "Не удалось сохранить процессы PM2." "sudo -u \"$ORIGINAL_USER\" pm2 save"
+run_silent "Не удалось настроить автозапуск PM2." "env PATH=\$PATH:/usr/bin pm2 startup systemd -u \"$ORIGINAL_USER\" --hp \"/home/$ORIGINAL_USER\" | tail -n 1 | bash"
 
 # --- 9. Настройка CRON-задачи для очистки кэша ---
-print_info "Добавляем CRON-задачу для автоматической очистки кэша (каждую ночь в 3:00)..."
+print_info "Добавляем CRON-задачу для автоматической очистки кэша..."
 PYTHON_PATH=$(which python3)
 CLEANUP_SCRIPT_PATH="$PROJECT_DIR_FULL_PATH/python_api/cleanup.py"
 LOG_FILE_PATH="$PROJECT_DIR_FULL_PATH/cleanup.log"
-
 CRON_CMD="$PYTHON_PATH $CLEANUP_SCRIPT_PATH >> $LOG_FILE_PATH 2>&1"
 CRON_JOB="0 3 * * * $CRON_CMD"
+run_silent "Не удалось настроить CRON-задачу." "(crontab -u \"$ORIGINAL_USER\" -l 2>/dev/null | grep -v -F \"$CLEANUP_SCRIPT_PATH\" ; echo \"$CRON_JOB\") | crontab -u \"$ORIGINAL_USER\" -"
 
-# Добавляем задачу в crontab пользователя, а не root
-(crontab -u "${SUDO_USER:-$(whoami)}" -l 2>/dev/null | grep -v -F "$CLEANUP_SCRIPT_PATH" ; echo "$CRON_JOB") | crontab -u "${SUDO_USER:-$(whoami)}" -
-
+# --- Финальное сообщение ---
+rm -f "$LOG_FILE" # Очищаем временный лог
 print_success "Установка успешно завершена!"
 echo "=================================================="
 echo "Бот и API запущены и добавлены в автозагрузку."
 echo "Вы можете проверить их статус командой: pm2 ls"
 echo "Логи можно посмотреть так: pm2 logs tiktok-api или pm2 logs tiktok-bot"
-echo "Задача очистки кэша добавлена в CRON и будет запускаться каждую ночь."
 echo "=================================================="
