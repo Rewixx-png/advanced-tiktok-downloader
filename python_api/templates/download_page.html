@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
     <style>
         :root { --plyr-color-main: #1778f2; }
-        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #000; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #000; color: #fff; height: 100vh; overflow: hidden; }
         #bg-video { 
             position: fixed; top: 50%; left: 50%; 
             min-width: 100%; min-height: 100%; 
@@ -15,12 +15,34 @@
             transform: translateX(-50%) translateY(-50%); 
             object-fit: cover; 
             filter: blur(20px); opacity: 0.3;
+            transition: filter 0.5s ease, opacity 0.5s ease;
         }
-        .container { z-index: 1; text-align: center; background-color: rgba(0, 0, 0, 0.6); padding: 40px; border-radius: 15px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.2); }
+        .container { 
+            position: absolute; 
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10; text-align: center; 
+            background-color: rgba(0, 0, 0, 0.6); 
+            padding: 40px; border-radius: 15px; 
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); 
+            border: 1px solid rgba(255, 255, 255, 0.2); 
+            transition: opacity 0.5s ease, transform 0.2s ease; 
+            cursor: grab;
+        }
+        .dragging {
+            transform: scale(1.05) !important;
+            opacity: 0.9 !important;
+            cursor: grabbing;
+        }
         h1 { margin-top: 0; font-weight: 500; }
         .player-container { margin-bottom: 25px; }
         .download-btn { display: inline-block; text-decoration: none; background-color: var(--plyr-color-main); color: white; padding: 12px 24px; border-radius: 8px; font-size: 16px; font-weight: bold; transition: background-color 0.3s, transform 0.2s; }
         .download-btn:hover { background-color: #1464c7; transform: scale(1.05); }
+        .controls-panel { position: fixed; bottom: 20px; right: 20px; z-index: 101; display: flex; gap: 10px; }
+        .control-btn { width: 50px; height: 50px; background-color: rgba(20, 20, 20, 0.7); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 50%; cursor: pointer; display: flex; justify-content: center; align-items: center; font-size: 24px; transition: background-color 0.3s, transform 0.2s; backdrop-filter: blur(5px); }
+        .control-btn:hover { background-color: rgba(40, 40, 40, 0.9); transform: scale(1.1); }
+        .close-btn { position: absolute; top: 10px; right: 15px; font-size: 28px; cursor: pointer; color: rgba(255, 255, 255, 0.5); transition: color 0.3s; }
+        .close-btn:hover { color: rgba(255, 255, 255, 1); }
         #permission-banner {
             position: fixed; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
@@ -48,11 +70,13 @@
         <p>Нажмите, чтобы включить фоновую музыку.</p>
         <button id="allow-audio-btn">Включить звук</button>
     </div>
-
+    
     <video autoplay muted loop id="bg-video">
         <source src="/video_file/{video_id}" type="video/mp4">
     </video>
-    <div class="container">
+
+    <div id="player-banner" class="container">
+        <div id="close-player-btn" class="close-btn">&times;</div>
         <h1>Прослушать и скачать трек</h1>
         <div class="player-container">
             <audio id="player" controls>
@@ -62,44 +86,48 @@
         <a href="/audio/{music_file_id}" class="download-btn" download>Скачать MP3</a>
     </div>
 
+    <div class="controls-panel">
+        <div id="toggle-blur-btn" class="control-btn">👁️</div>
+        <div id="toggle-water-btn" class="control-btn">💧</div>
+        <div id="show-player-btn" class="control-btn" style="display: none;">🎵</div>
+    </div>
+    
     <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const videoElement = document.getElementById('bg-video');
             const playerElement = document.getElementById('player');
-            const player = new Plyr(playerElement);
+            const player = new Plyr(playerElement, { seekTime: 5 });
             const banner = document.getElementById('permission-banner');
             const allowBtn = document.getElementById('allow-audio-btn');
-            
-            let audioContext;
-            let videoSource, videoGainNode;
-            let playerSource, playerGainNode;
+            const playerBanner = document.getElementById('player-banner');
+            const closePlayerBtn = document.getElementById('close-player-btn');
+            const toggleBlurBtn = document.getElementById('toggle-blur-btn');
+            const toggleWaterBtn = document.getElementById('toggle-water-btn');
+            const showPlayerBtn = document.getElementById('show-player-btn');
+
+            let isBlurEnabled = true;
+            let isWaterEffectEnabled = true;
+            let audioContext, videoSource, videoGainNode, playerSource, playerGainNode, underwaterFilter;
+            let isSeeking = false; // флаг перемотки
 
             function setupAudio() {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                
-                // --- Настройка звука ВИДЕО ---
                 videoSource = audioContext.createMediaElementSource(videoElement);
                 videoGainNode = audioContext.createGain(); 
-                const underwaterFilter = audioContext.createBiquadFilter();
+                underwaterFilter = audioContext.createBiquadFilter();
                 underwaterFilter.type = 'lowpass';
                 underwaterFilter.frequency.value = 400;
-
-                videoSource.connect(underwaterFilter);
-                underwaterFilter.connect(videoGainNode);
-                videoGainNode.connect(audioContext.destination);
+                videoSource.connect(underwaterFilter).connect(videoGainNode).connect(audioContext.destination);
                 
-                // --- Настройка звука ПЛЕЕРА ---
                 playerSource = audioContext.createMediaElementSource(playerElement);
                 playerGainNode = audioContext.createGain();
-                playerSource.connect(playerGainNode);
-                playerGainNode.connect(audioContext.destination);
+                playerSource.connect(playerGainNode).connect(audioContext.destination);
 
-                // Изначальные настройки громкости
                 videoElement.volume = 1; 
                 playerElement.volume = 1; 
                 playerGainNode.gain.value = 0; 
-                videoGainNode.gain.value = 0; // Начинаем с полной тишины
+                videoGainNode.gain.value = 0;
             }
 
             function fadeVolume(gainNode, targetVolume, duration = 500) {
@@ -107,35 +135,68 @@
                 gainNode.gain.cancelScheduledValues(audioContext.currentTime);
                 gainNode.gain.linearRampToValueAtTime(targetVolume, audioContext.currentTime + duration / 1000);
             }
-            
+
             allowBtn.addEventListener('click', () => {
-                // Инициализируем всю аудиосистему ТОЛЬКО после нажатия
-                if (!audioContext) {
-                    setupAudio();
-                }
-
+                if (!audioContext) setupAudio();
+                
                 audioContext.resume().then(() => {
-                    console.log('AudioContext resumed!');
-
-                    // --- ГЛАВНОЕ ИСПРАВЛЕНИЕ: Прямо сообщаем браузеру, что видео больше не "тихое" ---
                     videoElement.muted = false;
-
-                    // Плавно включаем звук видео с подводным эффектом
                     fadeVolume(videoGainNode, 0.7, 1000); 
-
                     banner.style.opacity = '0';
                     setTimeout(() => { banner.style.display = 'none'; }, 500);
                 });
             });
-            
+
+            closePlayerBtn.addEventListener('click', () => {
+                player.pause();
+                playerBanner.style.opacity = '0';
+                playerBanner.style.transform = 'scale(0.95)';
+                videoElement.style.opacity = '1';
+                setTimeout(() => {
+                    playerBanner.style.display = 'none';
+                    showPlayerBtn.style.display = 'flex';
+                }, 500);
+            });
+
+            showPlayerBtn.addEventListener('click', () => {
+                playerBanner.style.display = 'block';
+                showPlayerBtn.style.display = 'none';
+                setTimeout(() => {
+                    playerBanner.style.opacity = '1';
+                    playerBanner.style.transform = 'scale(1)';
+                    videoElement.style.opacity = '0.3';
+                }, 50);
+            });
+
+            toggleBlurBtn.addEventListener('click', () => {
+                isBlurEnabled = !isBlurEnabled;
+                videoElement.style.filter = isBlurEnabled ? 'blur(20px)' : 'blur(0px)';
+                toggleBlurBtn.textContent = isBlurEnabled ? '👁️' : '🙈';
+            });
+
+            toggleWaterBtn.addEventListener('click', () => {
+                if (!audioContext) return; 
+                isWaterEffectEnabled = !isWaterEffectEnabled;
+                underwaterFilter.frequency.cancelScheduledValues(audioContext.currentTime);
+                underwaterFilter.frequency.linearRampToValueAtTime(
+                    isWaterEffectEnabled ? 400 : 20000,
+                    audioContext.currentTime + 0.5
+                );
+                toggleWaterBtn.textContent = isWaterEffectEnabled ? '💧' : '💨';
+            });
+
+            // фиксы перемотки
+            player.on('seeking', () => { isSeeking = true; });
+            player.on('seeked', () => { isSeeking = false; });
+
             player.on('play', () => {
-                if (!audioContext) return; // Не делаем ничего, если звук не разрешен
+                if (!audioContext || isSeeking) return;
                 fadeVolume(videoGainNode, 0);
                 fadeVolume(playerGainNode, 1);
             });
 
             player.on('pause', () => {
-                if (!audioContext) return;
+                if (!audioContext || isSeeking) return;
                 fadeVolume(playerGainNode, 0);
                 fadeVolume(videoGainNode, 0.7);
             });
@@ -145,6 +206,44 @@
                 fadeVolume(playerGainNode, 0);
                 fadeVolume(videoGainNode, 0.7);
             });
+
+            // DRAG-AND-DROP
+            let isDragging = false, offsetX = 0, offsetY = 0;
+
+            playerBanner.addEventListener('mousedown', startDrag);
+            playerBanner.addEventListener('touchstart', startDrag);
+
+            function startDrag(e) {
+                isDragging = true;
+                playerBanner.classList.add('dragging');
+                const rect = playerBanner.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                offsetX = clientX - rect.left;
+                offsetY = clientY - rect.top;
+                document.addEventListener('mousemove', onDrag);
+                document.addEventListener('mouseup', stopDrag);
+                document.addEventListener('touchmove', onDrag);
+                document.addEventListener('touchend', stopDrag);
+            }
+
+            function onDrag(e) {
+                if (!isDragging) return;
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                playerBanner.style.left = `${clientX - offsetX}px`;
+                playerBanner.style.top = `${clientY - offsetY}px`;
+                playerBanner.style.transform = 'none';
+            }
+
+            function stopDrag() {
+                isDragging = false;
+                playerBanner.classList.remove('dragging');
+                document.removeEventListener('mousemove', onDrag);
+                document.removeEventListener('mouseup', stopDrag);
+                document.removeEventListener('touchmove', onDrag);
+                document.removeEventListener('touchend', stopDrag);
+            }
         });
     </script>
 </body>

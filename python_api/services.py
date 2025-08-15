@@ -31,7 +31,7 @@ async def download_music(search_query: str) -> str | None:
         # Функция-фильтр для yt-dlp, которая проверяет длительность
         def duration_filter(info_dict):
             duration = info_dict.get('duration')
-            if duration and duration > 300: # 300 секунд = 5 минут
+            if duration and duration > 1200: # 1200 секунд = 20 минут
                 return 'Видео слишком длинное'
             return None
 
