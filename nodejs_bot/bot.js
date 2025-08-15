@@ -3,7 +3,7 @@ const fs = require('fs');
 const axios = require('axios');
 const path = require('path');
 
-const PUBLIC_SERVER_IP = '129.146.118.56';
+const PUBLIC_SERVER_IP = '108.165.164.216';
 const API_INTERNAL_URL = 'http://127.0.0.1:18361';
 
 const tokenPath = path.join(__dirname, 'token.txt');
