@@ -1,10 +1,9 @@
 #!/bin/bash
 
 # =================================================================
-#      Advanced TikTok Downloader - "Пуленепробиваемый" установщик v4.0
+#      Advanced TikTok Downloader - "Пуленепробиваемый" установщик v4.1
 # =================================================================
-# Скрипт гарантирует чистоту установки, удаляя старые процессы,
-# и скрывает ненужный вывод, показывая ошибки при их возникновении.
+# Добавлена установка cron для совместимости.
 # =================================================================
 
 # --- Вспомогательные функции для вывода ---
@@ -34,7 +33,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 clear
-print_info "Добро пожаловать в 'пуленепробиваемый' установщик v4.0!"
+print_info "Добро пожаловать в 'пуленепробиваемый' установщик v4.1!"
 echo "--------------------------------------------------"
 
 # --- 2. Запрос данных ---
@@ -48,8 +47,9 @@ echo "--------------------------------------------------"
 print_info "Обновляем списки пакетов apt (тихий режим)..."
 run_silent "Не удалось обновить списки пакетов." apt-get -y -qq update
 
-print_info "Устанавливаем системные зависимости (git, python3, pip, curl, ffmpeg)..."
-run_silent "Не удалось установить системные зависимости." apt-get -y -qq install git python3 python3-pip curl ffmpeg
+# +++ ИЗМЕНЕНИЕ: Добавляем cron в список установки +++
+print_info "Устанавливаем системные зависимости (git, python, pip, curl, ffmpeg, cron)..."
+run_silent "Не удалось установить системные зависимости." apt-get -y -qq install git python3 python3-pip curl ffmpeg cron
 
 # --- 4. Установка Node.js 20.x ---
 print_info "Устанавливаем Node.js v20.x..."
@@ -74,10 +74,10 @@ cd "$PROJECT_DIR_FULL_PATH" || print_error "Не удалось перейти �
 print_info "Настраиваем Python API..."
 cd python_api/ || print_error "Не найдена папка python_api."
 mkdir -p audio_files video_cache
-print_info "Устанавливаем Python-библиотеки (это может занять некоторое время)..."
+print_info "Устанавливаем Python-библиотеки..."
 run_silent "Не удалось обновить pip." python3 -m pip install --upgrade pip
 run_silent "Не удалось установить Python-библиотеки." python3 -m pip install TikTokApi fastapi "uvicorn[standard]" python-dotenv playwright httpx shazamio opencv-python-headless yt-dlp youtube-search-python aiosqlite
-print_info "Скачиваем браузер для Playwright (это может занять несколько минут)..."
+print_info "Скачиваем браузер для Playwright..."
 run_silent "Не удалось установить браузер для Playwright." python3 -m playwright install chromium
 print_info "Создаем файл конфигурации .env..."
 echo "MS_TOKEN=$MS_TOKEN" > .env
@@ -96,22 +96,21 @@ cd ..
 run_silent "Не удалось установить PM2." npm install -g pm2
 
 print_info "Очищаем PM2 от старых процессов..."
-# Этот блок гарантирует, что не будет дубликатов
 pm2 delete tiktok-api >> "$LOG_FILE" 2>&1 || true
 pm2 delete tiktok-bot >> "$LOG_FILE" 2>&1 || true
 
 print_info "Запускаем процессы через PM2 от имени пользователя '$ORIGINAL_USER'..."
-run_silent "Не удалось запустить процессы." sudo -u "$ORIGINAL_USER" pm2 start python_api/api.py --name "tiktok-api" --interpreter python3
-run_silent "Не удалось запустить процессы." sudo -u "$ORIGINAL_USER" pm2 start nodejs_bot/bot.js --name "tiktok-bot"
+run_silent "Не удалось запустить API." sudo -u "$ORIGINAL_USER" pm2 start python_api/api.py --name "tiktok-api" --interpreter python3
+run_silent "Не удалось запустить бота." sudo -u "$ORIGINAL_USER" pm2 start nodejs_bot/bot.js --name "tiktok-bot"
 
 print_info "Сохраняем процессы для автозапуска после перезагрузки..."
 run_silent "Не удалось сохранить процессы PM2." sudo -u "$ORIGINAL_USER" pm2 save
-# Безопасная настройка автозапуска
 STARTUP_CMD=$(pm2 startup systemd -u "$ORIGINAL_USER" --hp "/home/$ORIGINAL_USER" | tail -n 1)
 if [[ $STARTUP_CMD == sudo* ]]; then
+    print_info "Настраиваем автозапуск PM2..."
     run_silent "Не удалось настроить автозапуск PM2." eval "$STARTUP_CMD"
 else
-    print_warning "Не удалось автоматически настроить автозапуск PM2. Пожалуйста, выполните команду вручную."
+    print_warning "Не удалось автоматически настроить автозапуск PM2. Возможно, он уже настроен."
 fi
 
 # --- 9. Настройка CRON-задачи ---
@@ -121,7 +120,8 @@ CLEANUP_SCRIPT_PATH="$PROJECT_DIR_FULL_PATH/python_api/cleanup.py"
 LOG_FILE_PATH="$PROJECT_DIR_FULL_PATH/cleanup.log"
 CRON_CMD="$PYTHON_PATH $CLEANUP_SCRIPT_PATH >> $LOG_FILE_PATH 2>&1"
 CRON_JOB="0 3 * * * $CRON_CMD"
-run_silent "Не удалось настроить CRON-задачу." "(crontab -u \"$ORIGINAL_USER\" -l 2>/dev/null | grep -v -F \"$CLEANUP_SCRIPT_PATH\" ; echo \"$CRON_JOB\") | crontab -u \"$ORIGINAL_USER\" -"
+# Удаляем старую задачу (если есть) и добавляем новую
+(crontab -u "$ORIGINAL_USER" -l 2>/dev/null | grep -v -F "$CLEANUP_SCRIPT_PATH" ; echo "$CRON_JOB") | crontab -u "$ORIGINAL_USER" -
 
 # --- Финальное сообщение ---
 rm -f "$LOG_FILE"
