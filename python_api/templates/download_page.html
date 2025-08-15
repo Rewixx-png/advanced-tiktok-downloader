@@ -6,52 +6,123 @@
     <title>Скачать трек</title>
     <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
     <style>
-        :root { --plyr-color-main: #1778f2; }
-        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #000; color: #fff; height: 100vh; overflow: hidden; }
-        #bg-video { 
-            position: fixed; top: 50%; left: 50%; 
-            min-width: 100%; min-height: 100%; 
-            width: auto; height: auto; z-index: -1; 
-            transform: translateX(-50%) translateY(-50%); 
-            object-fit: cover; 
-            filter: blur(20px); opacity: 0.3;
+        :root {
+            --plyr-color-main: #1778f2;
+            --container-bg: rgba(25, 25, 25, 0.7);
+            --border-color: rgba(255, 255, 255, 0.15);
+            --shadow-color: rgba(0, 0, 0, 0.3);
+        }
+        
+        * {
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #000;
+            color: #fff;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #bg-video {
+            position: fixed; top: 50%; left: 50%;
+            min-width: 100%; min-height: 100%;
+            width: auto; height: auto; z-index: -1;
+            transform: translateX(-50%) translateY(-50%);
+            object-fit: cover;
+            filter: blur(20px);
+            opacity: 0.3;
             transition: filter 0.5s ease, opacity 0.5s ease;
         }
-        .container { 
-            position: absolute; 
-            top: 50%; left: 50%;
+
+        .container {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 90%;
+            min-width: 320px;
+            max-width: 450px;
+            box-sizing: border-box;
             transform: translate(-50%, -50%);
-            z-index: 10; text-align: center; 
-            background-color: rgba(0, 0, 0, 0.6); 
-            padding: 40px; border-radius: 15px; 
-            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); 
-            border: 1px solid rgba(255, 255, 255, 0.2); 
-            transition: opacity 0.5s ease, transform 0.2s ease; 
+            z-index: 10;
+            text-align: center;
+            background-color: var(--container-bg);
+            padding: 30px;
+            border-radius: 18px;
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border-color);
+            box-shadow: 0 8px 32px 0 var(--shadow-color);
+            transition: opacity 0.3s ease, transform 0.3s ease-out;
             cursor: grab;
         }
+
         .dragging {
-            transform: scale(1.05) !important;
-            opacity: 0.9 !important;
             cursor: grabbing;
+            transition: none;
         }
-        h1 { margin-top: 0; font-weight: 500; }
+
+        h1 { margin-top: 0; font-weight: 500; font-size: 1.5em; }
         .player-container { margin-bottom: 25px; }
-        .download-btn { display: inline-block; text-decoration: none; background-color: var(--plyr-color-main); color: white; padding: 12px 24px; border-radius: 8px; font-size: 16px; font-weight: bold; transition: background-color 0.3s, transform 0.2s; }
-        .download-btn:hover { background-color: #1464c7; transform: scale(1.05); }
-        .controls-panel { position: fixed; bottom: 20px; right: 20px; z-index: 101; display: flex; gap: 10px; }
-        .control-btn { width: 50px; height: 50px; background-color: rgba(20, 20, 20, 0.7); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 50%; cursor: pointer; display: flex; justify-content: center; align-items: center; font-size: 24px; transition: background-color 0.3s, transform 0.2s; backdrop-filter: blur(5px); }
-        .control-btn:hover { background-color: rgba(40, 40, 40, 0.9); transform: scale(1.1); }
-        .close-btn { position: absolute; top: 10px; right: 15px; font-size: 28px; cursor: pointer; color: rgba(255, 255, 255, 0.5); transition: color 0.3s; }
-        .close-btn:hover { color: rgba(255, 255, 255, 1); }
+
+        .download-btn {
+            display: inline-block;
+            text-decoration: none;
+            background-color: var(--plyr-color-main);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            transition: background-color 0.3s, transform 0.2s;
+        }
+        .download-btn:hover { background-color: #1464c7; }
+        .download-btn:active { transform: scale(0.95); }
+
+        .controls-panel {
+            position: fixed; bottom: 20px; right: 20px;
+            z-index: 101; display: flex; gap: 10px;
+        }
+
+        .control-btn {
+            width: 50px; height: 50px;
+            background-color: var(--container-bg);
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 15px var(--shadow-color);
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            transition: background-color 0.3s, transform 0.2s;
+            backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+        }
+        .control-btn:hover { background-color: rgba(40, 40, 40, 0.9); }
+        .control-btn:active { transform: scale(0.9); }
+
+        .close-btn {
+            position: absolute; top: 10px; right: 15px;
+            font-size: 28px;
+            cursor: pointer;
+            color: rgba(255, 255, 255, 0.5);
+            transition: color 0.3s, transform 0.2s;
+        }
+        .close-btn:hover { color: white; }
+        .close-btn:active { transform: scale(0.9); }
+
         #permission-banner {
             position: fixed; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
             z-index: 100; padding: 25px 40px;
-            background-color: rgba(20, 20, 20, 0.8);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            background-color: rgba(20, 20, 20, 0.85);
+            border: 1px solid var(--border-color);
             backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
             border-radius: 15px; text-align: center;
             transition: opacity 0.5s ease;
+            box-shadow: 0 8px 32px 0 var(--shadow-color);
         }
         #permission-banner h2 { margin-top: 0; }
         #permission-banner p { margin-bottom: 20px; opacity: 0.8; }
@@ -61,7 +132,8 @@
             font-size: 16px; font-weight: bold; cursor: pointer;
             transition: background-color 0.3s, transform 0.2s;
         }
-        #allow-audio-btn:hover { background-color: #1464c7; transform: scale(1.05); }
+        #allow-audio-btn:hover { background-color: #1464c7; }
+        #allow-audio-btn:active { transform: scale(0.95); }
     </style>
 </head>
 <body>
@@ -109,7 +181,7 @@
             let isBlurEnabled = true;
             let isWaterEffectEnabled = true;
             let audioContext, videoSource, videoGainNode, playerSource, playerGainNode, underwaterFilter;
-            let isSeeking = false; // флаг перемотки
+            let seekTimeout = null;
 
             function setupAudio() {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -150,22 +222,28 @@
             closePlayerBtn.addEventListener('click', () => {
                 player.pause();
                 playerBanner.style.opacity = '0';
-                playerBanner.style.transform = 'scale(0.95)';
+                playerBanner.style.transform = 'translate(-50%, -50%) scale(0.95)';
+                
+                // --- ИЗМЕНЕНИЕ: Делаем фон полностью видимым ---
                 videoElement.style.opacity = '1';
+
                 setTimeout(() => {
                     playerBanner.style.display = 'none';
                     showPlayerBtn.style.display = 'flex';
-                }, 500);
+                }, 300);
             });
 
             showPlayerBtn.addEventListener('click', () => {
                 playerBanner.style.display = 'block';
                 showPlayerBtn.style.display = 'none';
+
+                // --- ИЗМЕНЕНИЕ: Затемняем фон обратно ---
+                videoElement.style.opacity = '0.3';
+
                 setTimeout(() => {
                     playerBanner.style.opacity = '1';
-                    playerBanner.style.transform = 'scale(1)';
-                    videoElement.style.opacity = '0.3';
-                }, 50);
+                    playerBanner.style.transform = 'translate(-50%, -50%) scale(1)';
+                }, 10);
             });
 
             toggleBlurBtn.addEventListener('click', () => {
@@ -184,21 +262,24 @@
                 );
                 toggleWaterBtn.textContent = isWaterEffectEnabled ? '💧' : '💨';
             });
-
-            // фиксы перемотки
-            player.on('seeking', () => { isSeeking = true; });
-            player.on('seeked', () => { isSeeking = false; });
-
+            
+            player.on('seeking', () => {
+                clearTimeout(seekTimeout);
+            });
+            
             player.on('play', () => {
-                if (!audioContext || isSeeking) return;
+                clearTimeout(seekTimeout);
+                if (!audioContext) return;
                 fadeVolume(videoGainNode, 0);
                 fadeVolume(playerGainNode, 1);
             });
-
+            
             player.on('pause', () => {
-                if (!audioContext || isSeeking) return;
-                fadeVolume(playerGainNode, 0);
-                fadeVolume(videoGainNode, 0.7);
+                seekTimeout = setTimeout(() => {
+                    if (!audioContext) return;
+                    fadeVolume(playerGainNode, 0);
+                    fadeVolume(videoGainNode, 0.7);
+                }, 50);
             });
             
             player.on('ended', () => {
@@ -207,42 +288,63 @@
                 fadeVolume(videoGainNode, 0.7);
             });
 
-            // DRAG-AND-DROP
-            let isDragging = false, offsetX = 0, offsetY = 0;
+            // --- DRAG-AND-DROP ---
+            let isDragging = false, currentX, currentY, initialX, initialY, xOffset = 0, yOffset = 0;
 
-            playerBanner.addEventListener('mousedown', startDrag);
-            playerBanner.addEventListener('touchstart', startDrag);
-
-            function startDrag(e) {
+            playerBanner.addEventListener('mousedown', dragStart);
+            playerBanner.addEventListener('touchstart', dragStart, { passive: false });
+            
+            function dragStart(e) {
+                if (e.target.closest('.plyr, .download-btn, .close-btn')) {
+                    return;
+                }
+                
                 isDragging = true;
                 playerBanner.classList.add('dragging');
-                const rect = playerBanner.getBoundingClientRect();
-                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-                offsetX = clientX - rect.left;
-                offsetY = clientY - rect.top;
-                document.addEventListener('mousemove', onDrag);
-                document.addEventListener('mouseup', stopDrag);
-                document.addEventListener('touchmove', onDrag);
-                document.addEventListener('touchend', stopDrag);
+                
+                const transform = window.getComputedStyle(playerBanner).getPropertyValue('transform');
+                const matrix = new DOMMatrix(transform);
+                xOffset = matrix.e;
+                yOffset = matrix.f;
+                
+                if (e.type === "touchstart") {
+                    initialX = e.touches[0].clientX - xOffset;
+                    initialY = e.touches[0].clientY - yOffset;
+                } else {
+                    e.preventDefault();
+                    initialX = e.clientX - xOffset;
+                    initialY = e.clientY - yOffset;
+                }
+                
+                document.addEventListener('mousemove', drag);
+                document.addEventListener('mouseup', dragEnd);
+                document.addEventListener('touchmove', drag, { passive: false });
+                document.addEventListener('touchend', dragEnd);
             }
 
-            function onDrag(e) {
+            function drag(e) {
                 if (!isDragging) return;
-                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-                playerBanner.style.left = `${clientX - offsetX}px`;
-                playerBanner.style.top = `${clientY - offsetY}px`;
-                playerBanner.style.transform = 'none';
+                e.preventDefault();
+
+                if (e.type === "touchmove") {
+                    currentX = e.touches[0].clientX - initialX;
+                    currentY = e.touches[0].clientY - initialY;
+                } else {
+                    currentX = e.clientX - initialX;
+                    currentY = e.clientY - initialY;
+                }
+                
+                playerBanner.style.transform = `translate(${currentX}px, ${currentY}px)`;
             }
 
-            function stopDrag() {
+            function dragEnd(e) {
                 isDragging = false;
                 playerBanner.classList.remove('dragging');
-                document.removeEventListener('mousemove', onDrag);
-                document.removeEventListener('mouseup', stopDrag);
-                document.removeEventListener('touchmove', onDrag);
-                document.removeEventListener('touchend', stopDrag);
+
+                document.removeEventListener('mousemove', drag);
+                document.removeEventListener('mouseup', dragEnd);
+                document.removeEventListener('touchmove', drag);
+                document.removeEventListener('touchend', dragEnd);
             }
         });
     </script>
