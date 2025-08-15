@@ -3,7 +3,7 @@ const fs = require('fs');
 const axios = require('axios');
 const path = require('path');
 
-// ВАЖНО: Укажите ваш ПУБЛИЧНЫЙ IP-адрес. Он нужен для ссылок на музыку.
+// ВАЖНО: Убедитесь, что здесь указан ваш ПУБЛИЧНЫЙ IP-адрес сервера.
 const PUBLIC_SERVER_IP = '108.165.164.216'; 
 
 const API_INTERNAL_URL = 'http://127.0.0.1:18361';
@@ -26,6 +26,12 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
+
+    // ----- ДОБАВЛЕНО ИСПРАВЛЕНИЕ -----
+    // Если текста в сообщении нет, прекращаем выполнение, чтобы избежать сбоя
+    if (!text) return;
+    // ----------------------------------
+
     const tiktokRegex = /https?:\/\/(?:www\.|vm\.|vt\.)?tiktok\.com\/\S+/;
     const match = text.match(tiktokRegex);
 
@@ -34,58 +40,66 @@ bot.on('message', async (msg) => {
         const waitingMsg = await bot.sendMessage(chatId, '⏳ Обрабатываю ссылку...', { reply_to_message_id: msg.message_id });
 
         try {
+            // ВАЖНО: В вашем коде статистика бралась из diggCount, а в API она в likeCount
+            // Я вернул обратно на diggCount, как было у вас, но если статистика неверная, поменяйте на metadata.statistics.likeCount
             const response = await axios.get(`${API_INTERNAL_URL}/video_data`, { params: { original_url: tiktokUrl }, timeout: 90000 });
             const { metadata, videoBase64, videoFilePath } = response.data;
             
             await bot.deleteMessage(chatId, waitingMsg.message_id);
-
+            
             let sentVideoMsg;
+            // Сначала отправляем видео с невидимым символом в подписи, чтобы потом ее отредактировать
             if (videoFilePath) {
-                sentVideoMsg = await bot.sendVideo(chatId, videoFilePath, { caption: '​' });
+                console.log(`Отправка кэшированного видео из файла: ${videoFilePath}`);
+                sentVideoMsg = await bot.sendVideo(chatId, videoFilePath, { caption: '​' }); // невидимый символ
             } else if (videoBase64) {
+                console.log('Отправка нового видео из base64.');
                 const videoBuffer = Buffer.from(videoBase64, 'base64');
-                sentVideoMsg = await bot.sendVideo(chatId, videoBuffer, { caption: '​' });
+                sentVideoMsg = await bot.sendVideo(chatId, videoBuffer, { caption: '​' }); // невидимый символ
             } else {
                 throw new Error("API не вернул ни видео, ни путь к нему.");
             }
-
-            const captionParts = [];
-            captionParts.push(`👤 **Автор:** @${metadata.author.uniqueId}\n  👥 Подписчиков: ${formatNumber(metadata.authorStats.followerCount)}\n  ❤️ Всего лайков: ${formatNumber(metadata.authorStats.heartCount)}`);
-            captionParts.push(captionParts[0] + `\n\n📝 **Описание:** ${metadata.description || 'Без описания'}`);
-            captionParts.push(captionParts[1] + `\n\n**Статистика видео:**\n  ❤️ Лайки: ${formatNumber(metadata.statistics.diggCount)}\n  💬 Комментарии: ${formatNumber(metadata.statistics.commentCount)}\n  🔁 Репосты: ${formatNumber(metadata.statistics.shareCount)}\n  ▶️ Просмотры: ${formatNumber(metadata.statistics.playCount)}`);
-            const detailsPart = `\n\n**Детали:**\n  🌑 **Теневой бан:** ${metadata.shadow_ban ? 'Да ⚠️' : 'Нет ✅'}\n  📍 **Регион:** ${getCountryName(metadata.region)}\n  📅 Опубликовано: ${formatTimestamp(metadata.createTime)}\n  ⏱️ Длительность: ${metadata.video_duration} сек.\n  ⚙️ Разрешение: ${metadata.video_details.resolution}`;
-            captionParts.push(captionParts[2] + detailsPart);
-            let finalCaption = captionParts[3];
+            
+            let caption = `👤 **Автор:** @${metadata.author.uniqueId}\n` +
+                        `  👥 Подписчиков: ${formatNumber(metadata.authorStats.followerCount)}\n` +
+                        `  ❤️ Всего лайков: ${formatNumber(metadata.authorStats.heartCount)}\n\n` +
+                        `📝 **Описание:** ${metadata.description || 'Без описания'}\n\n` +
+                        `**Статистика видео:**\n` +
+                        `  ❤️ Лайки: ${formatNumber(metadata.statistics.diggCount || metadata.statistics.likeCount)}\n` + // Добавил проверку на likeCount на всякий случай
+                        `  💬 Комментарии: ${formatNumber(metadata.statistics.commentCount)}\n` +
+                        `  🔁 Репосты: ${formatNumber(metadata.statistics.shareCount)}\n` +
+                        `  ▶️ Просмотры: ${formatNumber(metadata.statistics.playCount)}\n\n` +
+                        `**Детали:**\n` +
+                        `  🌑 **Теневой бан:** ${metadata.shadow_ban ? 'Да ⚠️' : 'Нет ✅'}\n` +
+                        `  📍 **Регион:** ${getCountryName(metadata.region)}\n` +
+                        `  📅 Опубликовано: ${formatTimestamp(metadata.createTime)}\n` +
+                        `  ⏱️ Длительность: ${metadata.video_duration} сек.\n` +
+                        `  ⚙️ Разрешение: ${metadata.video_details.resolution}`;
+            
             let musicLine = `\n\n🎵 **Музыка:** Оригинальный звук`;
             if (metadata.shazam && metadata.shazam.title !== 'Неизвестно') {
                 musicLine = `\n\n🎵 **Shazam:** ${metadata.shazam.artist} - ${metadata.shazam.title}`;
-                if (metadata.music_task_id) { musicLine += ` (Ищем музыку...)`; }
             }
-            captionParts.push(finalCaption + musicLine);
-            for (const caption of captionParts) {
-                try { await bot.editMessageCaption(caption, { chat_id: chatId, message_id: sentVideoMsg.message_id, parse_mode: 'Markdown' }); } catch (e) { /* ignore */ }
-                await sleep(700);
-            }
-            finalCaption += musicLine;
+            
+            let finalCaption = caption + musicLine;
+            
+            const options = {
+                chat_id: chatId,
+                message_id: sentVideoMsg.message_id,
+                parse_mode: 'Markdown'
+            };
 
-            if (metadata.music_task_id) {
-                try {
-                    const musicResponse = await axios.get(`${API_INTERNAL_URL}/music_status/${metadata.music_task_id}`, { timeout: 120000 });
-                    const { status, result } = musicResponse.data;
-                    let newMusicLine;
-                    if (status === 'completed') {
-                        // +++ ИЗМЕНЕНИЕ: Создаем новую ссылку с двумя ID +++
-                        const musicDownloadUrl = `http://${PUBLIC_SERVER_IP}:18361/download/${metadata.video_id}/${result}`;
-                        newMusicLine = `\n\n🎵 **Shazam:** [${metadata.shazam.artist} - ${metadata.shazam.title}](${musicDownloadUrl})`;
-                    } else { newMusicLine = `\n\n🎵 **Shazam:** ${metadata.shazam.artist} - ${metadata.shazam.title} (не найдена)`; }
-                    finalCaption = finalCaption.replace(musicLine.trim(), newMusicLine.trim());
-                } catch (musicError) {
-                    console.error("Ошибка при получении музыки:", musicError.message);
-                    const newMusicLine = `\n\n🎵 **Shazam:** ${metadata.shazam.artist} - ${metadata.shazam.title} (ошибка поиска)`;
-                    finalCaption = finalCaption.replace(musicLine.trim(), newMusicLine.trim());
-                }
-                await bot.editMessageCaption(finalCaption, { chat_id: chatId, message_id: sentVideoMsg.message_id, parse_mode: 'Markdown' });
+            if (metadata.music_file_id) {
+                const musicDownloadUrl = `http://${PUBLIC_SERVER_IP}:18361/download/${metadata.video_id}/${metadata.music_file_id}`;
+                options.reply_markup = JSON.stringify({
+                    inline_keyboard: [
+                        [{ text: '🎵 Скачать распознанный трек', url: musicDownloadUrl }]
+                    ]
+                });
             }
+
+            // Редактируем подпись у уже отправленного видео
+            await bot.editMessageCaption(finalCaption, options);
 
         } catch (error) {
             console.error(`[${chatId}] Ошибка:`, error.response ? error.response.data : error.message);
@@ -93,4 +107,9 @@ bot.on('message', async (msg) => {
             await bot.editMessageText(errorText, { chat_id: chatId, message_id: waitingMsg.message_id });
         }
     }
+});
+
+// Добавим обработчик ошибок, чтобы бот был стабильнее
+bot.on('polling_error', (error) => {
+    console.error('Ошибка опроса (polling_error):', error.code, '-', error.message);
 });
