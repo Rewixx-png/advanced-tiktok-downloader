@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =================================================================
-#      Advanced TikTok Downloader - "Тихий" установщик v3.0
+#      Advanced TikTok Downloader - "Тихий" установщик v3.1
 # =================================================================
 # Скрипт показывает только ключевые этапы установки. Детальный
 # вывод скрыт, но будет показан автоматически в случае ошибки.
@@ -19,13 +19,11 @@ LOG_FILE="/tmp/tiktok_installer.log"
 > "$LOG_FILE"
 
 # --- Функция для тихого выполнения команд ---
-# Выполняет команду, скрывая ее вывод. В случае ошибки, показывает лог.
 run_silent() {
     local message="$1"
     shift
     local command_to_run="$@"
 
-    # Выполняем команду, перенаправляя весь вывод в лог-файл
     if ! eval "$command_to_run" >> "$LOG_FILE" 2>&1; then
         print_error "$message"
         echo "---------------------- ДЕТАЛЬНЫЙ ЛОГ ОШИБКИ ----------------------"
@@ -41,7 +39,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 clear
-print_info "Добро пожаловать в 'тихий' установщик Advanced TikTok Downloader v3.0!"
+print_info "Добро пожаловать в 'тихий' установщик Advanced TikTok Downloader v3.1!"
 echo "--------------------------------------------------"
 
 # --- 2. Запрос необходимых данных у пользователя ---
@@ -59,10 +57,13 @@ run_silent "Не удалось обновить списки пакетов." "
 print_info "Устанавливаем системные зависимости (git, python3, pip, curl, ffmpeg)..."
 run_silent "Не удалось установить системные зависимости." "apt-get install -y git python3 python3-pip curl ffmpeg"
 
-# --- 4. Установка Node.js 20.x ---
+# --- 4. Установка Node.js 20.x (Исправленный "тихий" метод) ---
 print_info "Устанавливаем Node.js v20.x..."
-run_silent "Не удалось добавить репозиторий Node.js." "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -"
+NODE_SCRIPT_PATH="/tmp/nodesource_setup.sh"
+run_silent "Не удалось скачать скрипт установки Node.js." "curl -fsSL https://deb.nodesource.com/setup_20.x -o $NODE_SCRIPT_PATH"
+run_silent "Не удалось выполнить скрипт установки Node.js." "bash $NODE_SCRIPT_PATH"
 run_silent "Не удалось установить Node.js." "apt-get install -y nodejs"
+rm "$NODE_SCRIPT_PATH"
 
 # --- 5. Клонирование репозитория ---
 ORIGINAL_USER="${SUDO_USER:-$(whoami)}"
@@ -82,7 +83,7 @@ cd python_api/ || print_error "Не найдена папка python_api."
 mkdir -p audio_files video_cache
 
 print_info "Устанавливаем Python-библиотеки (это может занять некоторое время)..."
-run_silent "Не удалось установить Python-библиотеки." "pip install --upgrade pip"
+run_silent "Не удалось обновить pip." "pip install --upgrade pip"
 run_silent "Не удалось установить Python-библиотеки." "pip install TikTokApi fastapi \"uvicorn[standard]\" python-dotenv playwright httpx shazamio opencv-python-headless yt-dlp youtube-search-python aiosqlite"
 
 print_info "Скачиваем браузер для Playwright (это может занять несколько минут)..."
@@ -103,11 +104,10 @@ echo "$TELEGRAM_TOKEN" > token.txt
 
 # --- 8. Настройка PM2 для автозапуска ---
 print_info "Настраиваем менеджер процессов PM2..."
-cd .. # Возвращаемся в корень проекта
+cd ..
 run_silent "Не удалось установить PM2." "npm install -g pm2"
 
 print_info "Останавливаем и удаляем любые старые версии процессов..."
-# Используем `|| true`, чтобы скрипт не падал, если процессов еще не существует
 run_silent "Не удалось остановить старые процессы." "pm2 stop tiktok-api || true; pm2 delete tiktok-api || true; pm2 stop tiktok-bot || true; pm2 delete tiktok-bot || true"
 
 print_info "Запускаем процессы через PM2 от имени пользователя '$ORIGINAL_USER'..."
@@ -127,7 +127,7 @@ CRON_JOB="0 3 * * * $CRON_CMD"
 run_silent "Не удалось настроить CRON-задачу." "(crontab -u \"$ORIGINAL_USER\" -l 2>/dev/null | grep -v -F \"$CLEANUP_SCRIPT_PATH\" ; echo \"$CRON_JOB\") | crontab -u \"$ORIGINAL_USER\" -"
 
 # --- Финальное сообщение ---
-rm -f "$LOG_FILE" # Очищаем временный лог
+rm -f "$LOG_FILE"
 print_success "Установка успешно завершена!"
 echo "=================================================="
 echo "Бот и API запущены и добавлены в автозагрузку."
