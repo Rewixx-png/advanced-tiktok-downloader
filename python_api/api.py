@@ -1,3 +1,5 @@
+# advanced-tiktok-downloader-main/python_api/api.py
+
 import sqlite3
 import json
 import time
@@ -20,7 +22,8 @@ from youtubesearchpython import VideosSearch
 from shazamio import Shazam
 
 # --- Настройка ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Улучшенный формат логов для большей информативности
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s')
 logger = logging.getLogger(__name__)
 load_dotenv()
 ms_token = os.environ.get("MS_TOKEN")
@@ -56,12 +59,12 @@ def init_db_sync():
         con.close()
         logger.info("База данных успешно инициализирована.")
     except Exception as e:
-        logger.error(f"КРИТИЧЕСКАЯ ОШИБКА при инициализации БД: {e}")
+        logger.error(f"КРИТИЧЕСКАЯ ОШИБКА при инициализации БД: {e}", exc_info=True)
         raise e
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db_sync()  # Вызываем надежную синхронную функцию при старте
+    init_db_sync()
     logger.info("Запускаем TikTok API и создаем сессию...")
     api = TikTokApi()
     await api.create_sessions(ms_tokens=[ms_token], num_sessions=1, sleep_after=3, headless=True, browser="chromium")
@@ -80,9 +83,13 @@ async def resolve_short_url(url: str):
     if "vt.tiktok.com" in url or "vm.tiktok.com" in url:
         try:
             async with httpx.AsyncClient(follow_redirects=True) as client:
+                logger.info(f"Распознаем короткую ссылку: {url}")
                 r = await client.head(url, timeout=15.0)
-                return str(r.url).split("?")[0]
-        except httpx.RequestError:
+                full_url = str(r.url).split("?")[0]
+                logger.info(f"Полный URL получен: {full_url}")
+                return full_url
+        except httpx.RequestError as e:
+            logger.error(f"Ошибка при обработке короткой ссылки {url}: {e}", exc_info=True)
             raise HTTPException(status_code=400, detail="Не удалось обработать короткую ссылку TikTok.")
     return url
 
@@ -112,7 +119,8 @@ async def download_music(search_query: str) -> str | None:
                 'format': 'bestaudio/best',
                 'outtmpl': audio_path.replace('.mp3', ''),
                 'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                'quiet': True
+                'quiet': True,
+                'no_warnings': True
             }
             with YoutubeDL(ydl_opts) as ydl:
                 ydl.download([target_url])
@@ -123,7 +131,7 @@ async def download_music(search_query: str) -> str | None:
                 logger.error(f"yt-dlp завершил, но файл {audio_path} не найден.")
                 return None
     except Exception as e:
-        logger.error(f"Ошибка скачивания музыки: {e}")
+        logger.error(f"Ошибка скачивания музыки для запроса '{search_query}': {e}", exc_info=True)
     return None
 
 @app.get("/video_data")
@@ -138,7 +146,7 @@ async def get_video_data(original_url: str):
                 cached = await cursor.fetchone()
         
         if cached and os.path.exists(cached[1]):
-            logger.info(f"Найдено в кэше: {video_id}")
+            logger.info(f"Найдено в кэше: {video_id}. Отдаем сохраненные данные.")
             metadata = json.loads(cached[0])
             video_file_path = cached[1]
             audio_file_path = cached[2]
@@ -148,15 +156,40 @@ async def get_video_data(original_url: str):
             
             return JSONResponse(content={"metadata": metadata, "videoFilePath": video_file_path})
 
-        logger.info(f"Не найдено в кэше, загружаем: {video_id}")
+        logger.info(f"Не найдено в кэше или файл устарел, загружаем с TikTok: {video_id}")
         api = app_state["api"]
         video_obj = api.video(url=url)
-        video_data = await video_obj.info(use_video_v2=True)
         
+        video_data = None # Инициализируем переменную
+        try:
+            video_data = await video_obj.info(use_video_v2=True)
+            
+            # --- ГЛАВНЫЙ ЛОГ: СМОТРИМ, ЧТО ВЕРНУЛ TIKTOK ---
+            try:
+                # Преобразуем в JSON для красивого вывода в лог. ensure_ascii=False для кириллицы.
+                video_data_str = json.dumps(video_data, indent=2, ensure_ascii=False)
+                logger.info(f"ПОЛУЧЕНЫ ДАННЫЕ ДЛЯ video_id {video_id}:\n{video_data_str}")
+            except Exception:
+                logger.info(f"ПОЛУЧЕНЫ НЕ-JSON ДАННЫЕ ДЛЯ video_id {video_id}: {video_data}")
+            # --- КОНЕЦ ГЛАВНОГО ЛОГА ---
+
+        except Exception as e:
+            logger.error(f"КРИТИЧЕСКАЯ ОШИБКА при вызове video_obj.info() для URL {url}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Не удалось получить информацию о видео от TikTok API: {e}")
+        
+        if not video_data:
+            logger.warning(f"TikTok API вернул ПУСТОЙ ОБЪЕКТ для video_id: {video_id}. Видео может быть приватным, удаленным или недоступным в вашем регионе.")
+            raise HTTPException(status_code=404, detail="Видео не найдено или недоступно в вашем регионе.")
+
         final_stats = video_data.get('stats', video_data.get('statsV2', {}))
         is_shadow_banned = bool(video_data.get("warnInfo") or video_data.get("privateItem", False))
+        if is_shadow_banned:
+            logger.warning(f"Видео {video_id} имеет признаки ограничений (теневой бан или приватное).")
+            
         no_watermark_url = video_data.get("video", {}).get("playAddr")
-        if not no_watermark_url: raise HTTPException(status_code=404, detail="URL для скачивания не найден.")
+        if not no_watermark_url:
+            logger.error(f"URL для скачивания видео {video_id} не найден в полученных данных.")
+            raise HTTPException(status_code=404, detail="URL для скачивания не найден.")
         
         _, session = api._get_session()
         cookies = await api.get_session_cookies(session)
@@ -181,11 +214,11 @@ async def get_video_data(original_url: str):
                 if recognition.get('track'):
                     shazam_result = {"artist": recognition['track'].get('subtitle', 'Неизвестен'), "title": recognition['track'].get('title', 'Неизвестно')}
                     if shazam_result["title"] != 'Неизвестно':
-                        audio_file_path = await download_music(shazam_result['title'])
+                        audio_file_path = await download_music(f"{shazam_result['artist']} - {shazam_result['title']}")
                         if audio_file_path:
                             music_file_id = os.path.basename(audio_file_path).replace('.mp3', '')
         except Exception as e:
-            logger.error(f"Ошибка Shazam: {e}")
+            logger.error(f"Ошибка Shazam для видео {video_id}: {e}")
 
         metadata = {
             "video_id": video_id, "author": video_data.get('author', {}), "music": video_data.get('music', {}), 
