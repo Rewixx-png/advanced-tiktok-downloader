@@ -1,0 +1,34 @@
+<!-- python_api/templates/partials/player.html -->
+
+<div id="close-player-btn" class="close-btn" title="Свернуть плеер">&times;</div>
+
+<!-- НОВЫЙ КОНТЕЙНЕР ДЛЯ ГОРИЗОНТАЛЬНОГО РАСПОЛОЖЕНИЯ -->
+<div class="player-core-layout">
+    <div class="track-info">
+        <img src="{{ cover_url }}" alt="Обложка трека" class="track-cover">
+        <div class="track-details">
+            <h1 class="track-title" title="{{ track_title }}">{{ track_title }}</h1>
+            <p class="track-artist" title="{{ track_artist }}">{{ track_artist }}</p>
+        </div>
+    </div>
+    
+    <div class="player-container">
+        <audio id="player" controls>
+            <source src="/audio/{{ music_file_id }}" type="audio/mp3" />
+        </audio>
+    </div>
+</div>
+
+<div class="original-video-info">
+    <p>Трек из видео от <b>@{{ author_name }}</b></p>
+    <p class="video-description">"{{ video_desc }}"</p>
+</div>
+
+<div class="action-buttons">
+    <a href="/audio/{{ music_file_id }}" class="action-btn download-btn" download>
+        <span class="icon">📥</span> Скачать MP3
+    </a>
+    <button class="action-btn copy-btn" data-clipboard-text="{{ request.url }}">
+        <span class="icon">🔗</span> Копировать ссылку
+    </button>
+</div>

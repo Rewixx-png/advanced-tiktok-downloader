@@ -1,0 +1,218 @@
+:root {
+    --plyr-color-main: #0094ff;
+    --container-bg: rgba(22, 22, 22, 0.75);
+    --border-color: rgba(255, 255, 255, 0.1);
+    --shadow-color: rgba(0, 0, 0, 0.5);
+    --text-primary: #ffffff;
+    --text-secondary: #b3b3b3;
+    --accent-glow: 0 0 15px rgba(0, 148, 255, 0.5);
+    --plyr-control-radius: 8px;
+    --plyr-control-spacing: 15px;
+}
+
+* { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background-color: #000;
+    color: var(--text-primary);
+    height: 100vh;
+    overflow: hidden;
+    user-select: none;
+}
+
+/* --- [ФИНАЛЬНОЕ ОБНОВЛЕНИЕ] Логика для анимированной обводки --- */
+#bg-video {
+    position: relative; /* Обязательно для позиционирования псевдо-элемента */
+    z-index: -2; /* Убираем видео на задний план */
+    
+    /* Стандартные стили позиционирования и размера */
+    position: fixed; top: 50%; left: 50%;
+    min-width: 100%; min-height: 100%;
+    width: auto; height: auto;
+    
+    object-fit: cover;
+    transform: translateX(-50%) translateY(-50%) scale(1.05);
+    filter: blur(25px) brightness(0.6);
+    opacity: 1;
+    border-radius: 0px;
+
+    transition: transform 0.7s cubic-bezier(0.25, 0.46, 0.45, 0.94), 
+                filter 0.7s ease, 
+                opacity 0.7s ease,
+                border-radius 0.7s ease;
+}
+
+/* Создаем псевдо-элемент, который и будет нашей обводкой */
+#bg-video::before {
+    content: '';
+    position: absolute;
+    z-index: -1; /* Размещаем его между видео и фоном */
+    
+    /* Делаем его на 3px больше видео с каждой стороны, создавая рамку */
+    inset: -3px; 
+    
+    border-radius: 23px; /* Делаем скругление чуть больше, чем у видео */
+    opacity: 0; /* По умолчанию обводка невидима */
+    transition: opacity 0.7s ease; /* Анимация появления/исчезновения */
+}
+
+/* Когда видео уменьшено, мы "включаем" нашу обводку */
+#bg-video.original-size-mode {
+    object-fit: contain;
+    transform: translateX(-50%) translateY(-50%) scale(0.7);
+    border-radius: 20px;
+}
+
+/* Стили для видимой, анимированной обводки */
+#bg-video.original-size-mode::before {
+    opacity: 1; /* Делаем видимой */
+    
+    /* Создаем радужный конический градиент */
+    background: conic-gradient(
+        from 0deg, 
+        #8400ff, 
+        #ff0072, 
+        #ffb300, 
+        #4fff69, 
+        #00d4ff, 
+        #8400ff /* Замыкаем круг для плавной анимации */
+    );
+    
+    /* Запускаем бесконечную анимацию вращения градиента */
+    animation: rotate-glow 4s linear infinite;
+}
+
+/* Сама анимация, которая просто вращает псевдо-элемент */
+@keyframes rotate-glow {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+/* --- КОНЕЦ ФИНАЛЬНОГО ОБНОВЛЕНИЯ --- */
+
+
+.container {
+    position: fixed; top: 50%; left: 50%;
+    width: 90%; min-width: 320px; max-width: 550px;
+    transform: translate(-50%, -50%) scale(1);
+    z-index: 10;
+    background-color: var(--container-bg);
+    padding: 30px; border-radius: 20px;
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 8px 32px 0 var(--shadow-color);
+    transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    cursor: grab;
+}
+.container.hidden { opacity: 0; transform: translate(-50%, -50%) scale(0.9); pointer-events: none; }
+.container.dragging { cursor: grabbing; transition: none; }
+
+.player-core-layout { display: flex; align-items: center; gap: 25px; margin-bottom: 20px; }
+.track-info { display: flex; align-items: center; gap: 15px; min-width: 200px; }
+.track-cover { width: 90px; height: 90px; border-radius: 12px; object-fit: cover; box-shadow: 0 4px 15px rgba(0,0,0,0.4); flex-shrink: 0; }
+.track-details { overflow: hidden; }
+.track-title, .track-artist { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track-title { font-size: 1.5em; font-weight: 700; }
+.track-artist { font-size: 1.0em; color: var(--text-secondary); }
+
+.original-video-info {
+    font-size: 0.9em; color: var(--text-secondary); background: rgba(0,0,0,0.2);
+    padding: 10px 15px; border-radius: 10px; margin-bottom: 25px; border: 1px solid var(--border-color);
+}
+.original-video-info p { margin: 5px 0; }
+.video-description { font-style: italic; opacity: 0.8; max-height: 40px; overflow-y: auto; }
+
+.player-container { flex-grow: 1; }
+.plyr--audio .plyr__controls {
+    background: rgba(0,0,0,0.2);
+    border: none;
+    padding: 10px;
+    border-radius: 12px;
+    color: var(--text-primary);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+.plyr__controls__item.plyr__control[data-plyr="play"] { order: 1; }
+.plyr__progress__container { order: 2; width: 100%; flex-grow: 1; }
+.plyr__controls__item.plyr__time--current { order: 3; }
+.plyr__controls__item.plyr__volume { order: 4; display: flex; align-items: center; }
+.plyr__menu { order: 5; }
+
+.plyr__controls__item[data-plyr="download"], .plyr__controls__item[data-plyr="pip"],
+.plyr__controls__item[data-plyr="airplay"], .plyr__controls__item[data-plyr="fullscreen"],
+.plyr__controls__item.plyr__time--duration { display: none; }
+
+.plyr--audio .plyr__control.plyr__tab-focus, .plyr--audio .plyr__control:hover,
+.plyr--audio .plyr__control[aria-expanded="true"] { background: var(--plyr-color-main); color: #fff; }
+.plyr__control--overlaid { display: none; }
+.plyr__control { background: transparent; border-radius: var(--plyr-control-radius); transition: background-color 0.2s ease; }
+.plyr__progress input[type="range"] { color: var(--plyr-color-main); }
+.plyr__progress input::-webkit-slider-runnable-track { background-color: rgba(255,255,255,0.2); }
+.plyr__progress input::-moz-range-track { background-color: rgba(255,255,255,0.2); }
+.plyr__progress input::-ms-track { background-color: rgba(255,255,255,0.2); }
+.plyr__volume input[type="range"] { color: var(--plyr-color-main); }
+.plyr__time { font-size: 14px; color: var(--text-secondary); }
+.plyr__menu .plyr__control { padding: 7px; }
+
+
+.action-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+.action-btn {
+    display: flex; justify-content: center; align-items: center; gap: 8px; text-decoration: none;
+    background-color: rgba(255, 255, 255, 0.1); color: white; padding: 12px;
+    border: 1px solid var(--border-color); border-radius: 10px; font-size: 15px;
+    font-weight: 500; transition: background-color 0.2s, transform 0.2s; cursor: pointer;
+}
+.action-btn .icon { font-size: 1.2em; }
+.action-btn:hover { background-color: rgba(255, 255, 255, 0.2); }
+.action-btn:active { transform: scale(0.95); }
+.download-btn { background-color: var(--plyr-color-main); border-color: var(--plyr-color-main); }
+.download-btn:hover { background-color: #00a8ff; }
+
+.controls-panel { position: fixed; bottom: 20px; right: 20px; z-index: 101; display: flex; flex-direction: column; gap: 10px; }
+.control-btn {
+    width: 50px; height: 50px; background-color: var(--container-bg); border: 1px solid var(--border-color);
+    box-shadow: 0 4px 15px var(--shadow-color); border-radius: 50%; cursor: pointer; display: flex;
+    justify-content: center; align-items: center; font-size: 24px; transition: background-color 0.3s, transform 0.2s;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.control-btn:hover { background-color: rgba(40, 40, 40, 0.9); }
+.control-btn:active { transform: scale(0.9); }
+.control-btn .icon-off { display: none; }
+.control-btn.toggled .icon-on { display: none; }
+.control-btn.toggled .icon-off { display: block; }
+
+.close-btn {
+    position: absolute; top: 10px; right: 15px; font-size: 28px; cursor: pointer;
+    color: rgba(255, 255, 255, 0.5); transition: color 0.3s, transform 0.2s;
+}
+.close-btn:hover { color: white; }
+.close-btn:active { transform: scale(0.9); }
+
+#permission-banner {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 100; padding: 25px 40px;
+    background-color: rgba(20, 20, 20, 0.85); border: 1px solid var(--border-color);
+    backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+    border-radius: 15px; text-align: center; transition: opacity 0.5s ease, transform 0.5s ease;
+    box-shadow: 0 8px 32px 0 var(--shadow-color);
+}
+#permission-banner.hidden { opacity: 0; transform: translate(-50%, -50%) scale(0.9); pointer-events: none; }
+#permission-banner h2 { margin-top: 0; }
+#permission-banner p { margin-bottom: 20px; opacity: 0.8; }
+#allow-audio-btn {
+    background-color: var(--plyr-color-main); color: white; border: none; padding: 12px 28px;
+    border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer;
+    transition: background-color 0.3s, transform 0.2s;
+}
+#allow-audio-btn:hover { background-color: #00a8ff; }
+#allow-audio-btn:active { transform: scale(0.95); }
+
+@media (max-width: 600px) {
+    .container { padding: 20px; }
+    .player-core-layout { flex-direction: column; gap: 15px; align-items: flex-start; }
+    .track-info { width: 100%; }
+    .player-container { width: 100%; }
+    .track-title { font-size: 1.3em; }
+    .plyr--audio .plyr__controls { flex-wrap: wrap; }
+}

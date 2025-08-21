@@ -1,43 +1,49 @@
-from fastapi import FastAPI, HTTPException
+# python_api/api.py
+
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
 import asyncio
 import os
 import base64
-import re # <-- Добавлен импорт для регулярных выражений
+import re
+import cv2
+import time # <-- Импортируем time для cache busting
 from TikTokApi import TikTokApi
 import uvicorn
 
-# Импортируем наши новые модули
+# Импортируем наши модули
 import config
 import database
 import services
 
 # --- Создание папок ---
-for folder in [config.VIDEO_CACHE_DIR, config.AUDIO_DIR]:
+for folder in [config.VIDEO_CACHE_DIR, config.AUDIO_DIR, "templates/static", "templates/partials"]:
     if not os.path.exists(folder):
         os.makedirs(folder)
+        
 app_state = {}
 
-# --- ИСПРАВЛЕНИЕ: Новая, надёжная функция для извлечения ID ---
+# --- Надёжная функция для извлечения ID ---
 def extract_video_id_from_url(url: str) -> str | None:
-    """
-    Ищет в URL последовательность из 10 или более цифр, которая является ID видео.
-    Это работает для всех известных форматов ссылок TikTok.
-    """
     match = re.search(r'\d{10,}', url)
     if match:
         return match.group(0)
     return None
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
-
+# --- Контекст жизни приложения (запуск и остановка) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.init_db_sync()
     config.logger.info("Запускаем TikTok API и создаем сессию...")
     api = TikTokApi()
-    await api.create_sessions(ms_tokens=[config.MS_TOKEN], num_sessions=1, sleep_after=3, headless=True, browser="chromium")
+    if config.MS_TOKEN:
+        await api.create_sessions(ms_tokens=[config.MS_TOKEN], num_sessions=1, sleep_after=3, headless=True, browser="chromium")
+    else:
+        config.logger.error("MS_TOKEN не найден! API TikTok не будет работать.")
+        
     app_state["api"] = api
     app_state["shazam"] = services.Shazam()
     app_state["lock"] = asyncio.Lock()
@@ -49,6 +55,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# --- Подключаем статику и шаблонизатор ---
+app.mount("/static", StaticFiles(directory="templates/static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
+# ... (эндпоинты /video_data, /video_file, /audio, /video_thumb остаются без изменений) ...
 @app.get("/video_data")
 async def get_video_data(original_url: str):
     config.logger.info(f"Получен запрос для URL: {original_url}")
@@ -56,13 +67,11 @@ async def get_video_data(original_url: str):
         resolved_url = await services.resolve_short_url(original_url)
         config.logger.info(f"URL распознан как: {resolved_url}")
 
-        # --- ИСПРАВЛЕНИЕ: Используем новую функцию для получения ID ---
         video_id = extract_video_id_from_url(resolved_url)
         
         if not video_id:
             config.logger.error(f"Не удалось извлечь Video ID из URL: {resolved_url}")
             raise HTTPException(status_code=400, detail="Неверный формат ссылки TikTok или не удалось распознать ID видео.")
-        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
         
         video_file_path, metadata = await database.get_cached_video(video_id)
         if video_file_path and metadata:
@@ -115,36 +124,67 @@ async def get_video_file(video_id: str):
 @app.get("/audio/{file_id}")
 async def get_audio_file(file_id: str):
     file_path = os.path.join(config.AUDIO_DIR, f"{file_id}.mp3")
-    if not os.path.exists(file_path): raise HTTPException(status_code=404, detail="Файл не найден.")
+    if not os.path.exists(file_path): raise HTTPException(status_code=404, detail="Аудиофайл не найден.")
     return FileResponse(path=file_path, media_type='audio/mpeg', filename=f"track.mp3")
 
+@app.get("/video_thumb/{video_id}")
+async def get_video_thumbnail(video_id: str):
+    video_path = os.path.join(config.VIDEO_CACHE_DIR, f"{video_id}.mp4")
+    if not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="Видео не найдено.")
+    cap = cv2.VideoCapture(video_path)
+    success, image = cap.read()
+    cap.release()
+    if not success:
+        raise HTTPException(status_code=500, detail="Не удалось извлечь кадр из видео.")
+    success, buffer = cv2.imencode('.jpg', image)
+    if not success:
+        raise HTTPException(status_code=500, detail="Не удалось закодировать кадр в JPEG.")
+    return Response(content=buffer.tobytes(), media_type='image/jpeg')
+
+
+# --- [САМОЕ ВАЖНОЕ ОБНОВЛЕНИЕ] Эндпоинт для HTML-страницы ---
 @app.get("/download/{video_id}/{music_file_id}", response_class=HTMLResponse)
-async def download_page_with_video(video_id: str, music_file_id: str):
+async def download_page_with_video(request: Request, video_id: str, music_file_id: str):
     video_path = os.path.join(config.VIDEO_CACHE_DIR, f"{video_id}.mp4")
     music_path = os.path.join(config.AUDIO_DIR, f"{music_file_id}.mp3")
+    
     if not os.path.exists(video_path) or not os.path.exists(music_path):
-        return HTMLResponse(content="<h1>Ошибка 404: Файл не найден или устарел.</h1>", status_code=404)
+        return HTMLResponse(content="<h1>Ошибка 404: Файл не найден или устарел.</h1><p>Пожалуйста, отправьте ссылку на видео в бота заново.</p>", status_code=404)
     
     _, metadata = await database.get_cached_video(video_id)
     
-    author_name = "Неизвестный автор"
-    video_desc = "Описание отсутствует."
+    # --- [НОВЫЙ КОД] Cache Busting ---
+    # Получаем время последней модификации файлов для сброса кэша в браузере
+    try:
+        css_version = int(os.path.getmtime("templates/static/style.css"))
+        js_version = int(os.path.getmtime("templates/static/script.js"))
+    except OSError:
+        css_version = js_version = int(time.time())
+    # --- КОНЕЦ НОВОГО КОДА ---
+    
+    context = {
+        "request": request,
+        "video_id": video_id,
+        "music_file_id": music_file_id,
+        "author_name": "Неизвестный автор",
+        "video_desc": "Описание отсутствует.",
+        "track_title": "Трек из видео",
+        "track_artist": "Исполнитель неизвестен",
+        "cover_url": f"/video_thumb/{video_id}",
+        "css_version": css_version, # Передаем в шаблон
+        "js_version": js_version    # Передаем в шаблон
+    }
 
     if metadata:
-        author_name = metadata.get("author", {}).get("uniqueId", author_name)
-        video_desc = metadata.get("description", video_desc)
+        context["author_name"] = metadata.get("author", {}).get("uniqueId", context["author_name"])
+        context["video_desc"] = metadata.get("description") or context["video_desc"]
+        if shazam_result := metadata.get("shazam"):
+            context["track_title"] = shazam_result.get("title", context["track_title"])
+            context["track_artist"] = shazam_result.get("artist", context["track_artist"])
 
-    with open(config.TEMPLATE_FILE, 'r', encoding='utf-8') as f:
-        html_content = f.read()
-    
-    html_content = (
-        html_content.replace("{video_id}", video_id)
-        .replace("{music_file_id}", music_file_id)
-        .replace("{author_name}", author_name)
-        .replace("{video_desc}", video_desc if video_desc else "Без описания.")
-    )
-    return HTMLResponse(content=html_content)
+    return templates.TemplateResponse("download_page.html", context)
 
 if __name__ == "__main__":
     os.chdir(os.path.dirname(__file__))
-    uvicorn.run("api:app", host="0.0.0.0", port=18361)
+    uvicorn.run("api:app", host="0.0.0.0", port=18361, reload=True)
