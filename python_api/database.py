@@ -36,17 +36,26 @@ async def get_cached_video(video_id: str):
             cached = await cursor.fetchone()
 
     if cached and os.path.exists(cached[0]):
-        logger.info(f"Найдено в кэше: {video_id}")
-        video_file_path = cached[0]
-        metadata = json.loads(cached[1])
-        audio_file_path = cached[2]
+        try:
+            # ИСПРАВЛЕНИЕ: Проверяем, что размер файла больше 1 КБ, чтобы отсечь поврежденные/пустые файлы
+            if os.path.getsize(cached[0]) > 1024:
+                logger.info(f"Найдено в кэше (валидный файл): {video_id}")
+                video_file_path = cached[0]
+                metadata = json.loads(cached[1])
+                audio_file_path = cached[2]
 
-        if audio_file_path and os.path.exists(audio_file_path):
-            metadata['music_file_id'] = os.path.basename(audio_file_path).replace('.mp3', '')
-        else:
-            metadata['music_file_id'] = None
+                if audio_file_path and os.path.exists(audio_file_path):
+                    metadata['music_file_id'] = os.path.basename(audio_file_path).replace('.mp3', '')
+                else:
+                    metadata['music_file_id'] = None
+                    
+                return video_file_path, metadata
+            else:
+                logger.warning(f"Найден поврежденный (слишком маленький) файл в кэше для {video_id}. Удаляем его.")
+                os.remove(cached[0])
+        except OSError as e:
+            logger.error(f"Не удалось проверить кэшированный файл {cached[0]}: {e}")
             
-        return video_file_path, metadata
     return None, None
 
 async def save_video_to_cache(video_id, metadata, video_file_path, audio_file_path):

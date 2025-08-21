@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import asyncio
 import os
 import base64
+import re # <-- Добавлен импорт для регулярных выражений
 from TikTokApi import TikTokApi
 import uvicorn
 
@@ -17,6 +18,19 @@ for folder in [config.VIDEO_CACHE_DIR, config.AUDIO_DIR]:
     if not os.path.exists(folder):
         os.makedirs(folder)
 app_state = {}
+
+# --- ИСПРАВЛЕНИЕ: Новая, надёжная функция для извлечения ID ---
+def extract_video_id_from_url(url: str) -> str | None:
+    """
+    Ищет в URL последовательность из 10 или более цифр, которая является ID видео.
+    Это работает для всех известных форматов ссылок TikTok.
+    """
+    match = re.search(r'\d{10,}', url)
+    if match:
+        return match.group(0)
+    return None
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -37,16 +51,25 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/video_data")
 async def get_video_data(original_url: str):
+    config.logger.info(f"Получен запрос для URL: {original_url}")
     async with app_state["lock"]:
-        url = await services.resolve_short_url(original_url)
-        video_id = url.split("/")[-1].split("?")[0]
+        resolved_url = await services.resolve_short_url(original_url)
+        config.logger.info(f"URL распознан как: {resolved_url}")
+
+        # --- ИСПРАВЛЕНИЕ: Используем новую функцию для получения ID ---
+        video_id = extract_video_id_from_url(resolved_url)
+        
+        if not video_id:
+            config.logger.error(f"Не удалось извлечь Video ID из URL: {resolved_url}")
+            raise HTTPException(status_code=400, detail="Неверный формат ссылки TikTok или не удалось распознать ID видео.")
+        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
         
         video_file_path, metadata = await database.get_cached_video(video_id)
         if video_file_path and metadata:
             return JSONResponse(content={"metadata": metadata, "videoFilePath": video_file_path})
 
         config.logger.info(f"Не найдено в кэше, загружаем: {video_id}")
-        video_obj = app_state["api"].video(url=url)
+        video_obj = app_state["api"].video(url=resolved_url)
         video_data = await video_obj.info(use_video_v2=True)
         
         no_watermark_url = video_data.get("video", {}).get("playAddr")
@@ -78,10 +101,7 @@ async def get_video_data(original_url: str):
             "shadow_ban": bool(video_data.get("warnInfo") or video_data.get("privateItem", False)), "music_file_id": music_file_id
         }
         
-        # --- ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-        # Передаем audio_file_path в функцию сохранения, чтобы он корректно записывался в базу
         await database.save_video_to_cache(video_id, metadata, video_file_path, audio_file_path)
-        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
             
         video_base64 = base64.b64encode(video_bytes).decode('utf-8')
         return JSONResponse(content={"metadata": metadata, "videoBase64": video_base64})
@@ -105,10 +125,24 @@ async def download_page_with_video(video_id: str, music_file_id: str):
     if not os.path.exists(video_path) or not os.path.exists(music_path):
         return HTMLResponse(content="<h1>Ошибка 404: Файл не найден или устарел.</h1>", status_code=404)
     
+    _, metadata = await database.get_cached_video(video_id)
+    
+    author_name = "Неизвестный автор"
+    video_desc = "Описание отсутствует."
+
+    if metadata:
+        author_name = metadata.get("author", {}).get("uniqueId", author_name)
+        video_desc = metadata.get("description", video_desc)
+
     with open(config.TEMPLATE_FILE, 'r', encoding='utf-8') as f:
         html_content = f.read()
     
-    html_content = html_content.replace("{video_id}", video_id).replace("{music_file_id}", music_file_id)
+    html_content = (
+        html_content.replace("{video_id}", video_id)
+        .replace("{music_file_id}", music_file_id)
+        .replace("{author_name}", author_name)
+        .replace("{video_desc}", video_desc if video_desc else "Без описания.")
+    )
     return HTMLResponse(content=html_content)
 
 if __name__ == "__main__":

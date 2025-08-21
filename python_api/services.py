@@ -8,15 +8,30 @@ from shazamio import Shazam
 from config import logger, YDL_OPTIONS, YOUTUBE_COOKIES, VIDEO_CACHE_DIR, AUDIO_DIR
 
 async def resolve_short_url(url: str) -> str:
-    if "vt.tiktok.com" in url or "vm.tiktok.com" in url:
+    """
+    Раскрывает любые короткие ссылки TikTok (vt.tiktok.com, vm.tiktok.com, tiktok.com/t/...)
+    в полные URL-адреса, следуя редиректам.
+    """
+    # ИСПРАВЛЕНИЕ: Добавлена проверка на "/t/" в ссылке
+    if "vt.tiktok.com" in url or "vm.tiktok.com" in url or "/t/" in url:
         try:
+            # Делаем вид, что мы браузер, чтобы избежать блокировок
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
             async with httpx.AsyncClient(follow_redirects=True) as client:
-                r = await client.head(url, timeout=15.0)
-                return str(r.url).split("?")[0]
-        except httpx.RequestError:
-            logger.error("Не удалось обработать короткую ссылку TikTok.", exc_info=True)
-            return url
-    return url
+                # GET-запрос надежнее для отслеживания всех редиректов
+                response = await client.get(url, timeout=15.0, headers=headers)
+                final_url = str(response.url).split("?")[0]
+                logger.info(f"Короткая ссылка {url} раскрыта в {final_url}")
+                return final_url
+        except httpx.RequestError as e:
+            logger.error(f"Не удалось обработать короткую ссылку TikTok {url}: {e}", exc_info=True)
+            return url.split("?")[0] # Возвращаем очищенный URL даже в случае ошибки
+    
+    # Для обычных ссылок просто убираем параметры
+    return url.split("?")[0]
+
 
 async def download_music(search_query: str) -> str | None:
     cookie_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', encoding='utf-8')
@@ -27,8 +42,6 @@ async def download_music(search_query: str) -> str | None:
         music_file_id = str(uuid.uuid4())
         audio_path = os.path.abspath(os.path.join(AUDIO_DIR, f"{music_file_id}.mp3"))
         
-        # --- ГЛАВНОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-        # Функция-фильтр для yt-dlp, которая проверяет длительность
         def duration_filter(info_dict):
             duration = info_dict.get('duration')
             if duration and duration > 1200: # 1200 секунд = 20 минут
@@ -38,9 +51,8 @@ async def download_music(search_query: str) -> str | None:
         ydl_opts = YDL_OPTIONS.copy()
         ydl_opts['cookiefile'] = cookie_file.name
         ydl_opts['outtmpl'] = audio_path.replace('.mp3', '')
-        ydl_opts['match_filter'] = duration_filter # <-- ИСПОЛЬЗУЕМ ФУНКЦИЮ ВМЕСТО СТРОКИ
+        ydl_opts['match_filter'] = duration_filter
         search_string = f"ytsearch1:{search_query}"
-        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
         logger.info(f"Ищем и скачиваем музыку с YouTube по запросу: '{search_string}'")
         with YoutubeDL(ydl_opts) as ydl:

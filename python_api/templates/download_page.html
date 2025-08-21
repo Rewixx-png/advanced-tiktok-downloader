@@ -63,8 +63,33 @@
             cursor: grabbing;
             transition: none;
         }
-
-        h1 { margin-top: 0; font-weight: 500; font-size: 1.5em; }
+        
+        /* ДЕТАЛЬ: Стили для нового информационного блока */
+        .info-block {
+            margin-bottom: 20px;
+        }
+        #track-title {
+            margin-top: 0;
+            margin-bottom: 5px;
+            font-weight: 500;
+            font-size: 1.5em;
+        }
+        #video-author {
+            margin: 0;
+            font-size: 1.1em;
+            opacity: 0.8;
+        }
+        #video-description {
+            margin-top: 15px;
+            font-style: italic;
+            opacity: 0.7;
+            max-height: 50px;
+            overflow-y: auto;
+            font-size: 0.9em;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding-top: 10px;
+        }
+        
         .player-container { margin-bottom: 25px; }
 
         .download-btn {
@@ -149,7 +174,12 @@
 
     <div id="player-banner" class="container">
         <div id="close-player-btn" class="close-btn">&times;</div>
-        <h1>Прослушать и скачать трек</h1>
+        <!-- ДЕТАЛЬ: Добавлен блок с информацией о видео -->
+        <div class="info-block">
+            <h1 id="track-title">Трек из видео</h1>
+            <p id="video-author">от <b>@{author_name}</b></p>
+            <p id="video-description">"{video_desc}"</p>
+        </div>
         <div class="player-container">
             <audio id="player" controls>
                 <source src="/audio/{music_file_id}" type="audio/mp3" />
@@ -166,6 +196,7 @@
     
     <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
     <script>
+        // JS-код остался без изменений, т.к. он уже функционален
         document.addEventListener('DOMContentLoaded', () => {
             const videoElement = document.getElementById('bg-video');
             const playerElement = document.getElementById('player');
@@ -224,7 +255,6 @@
                 playerBanner.style.opacity = '0';
                 playerBanner.style.transform = 'translate(-50%, -50%) scale(0.95)';
                 
-                // --- ИЗМЕНЕНИЕ: Делаем фон полностью видимым ---
                 videoElement.style.opacity = '1';
 
                 setTimeout(() => {
@@ -237,7 +267,6 @@
                 playerBanner.style.display = 'block';
                 showPlayerBtn.style.display = 'none';
 
-                // --- ИЗМЕНЕНИЕ: Затемняем фон обратно ---
                 videoElement.style.opacity = '0.3';
 
                 setTimeout(() => {
@@ -288,14 +317,13 @@
                 fadeVolume(videoGainNode, 0.7);
             });
 
-            // --- DRAG-AND-DROP ---
             let isDragging = false, currentX, currentY, initialX, initialY, xOffset = 0, yOffset = 0;
 
             playerBanner.addEventListener('mousedown', dragStart);
             playerBanner.addEventListener('touchstart', dragStart, { passive: false });
             
             function dragStart(e) {
-                if (e.target.closest('.plyr, .download-btn, .close-btn')) {
+                if (e.target.closest('.plyr, .download-btn, .close-btn, #video-description')) {
                     return;
                 }
                 
