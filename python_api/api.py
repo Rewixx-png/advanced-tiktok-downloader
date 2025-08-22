@@ -59,7 +59,6 @@ app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="templates/static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# ... (эндпоинты /video_data, /video_file, /audio, /video_thumb остаются без изменений) ...
 @app.get("/video_data")
 async def get_video_data(original_url: str):
     config.logger.info(f"Получен запрос для URL: {original_url}")
@@ -143,7 +142,6 @@ async def get_video_thumbnail(video_id: str):
     return Response(content=buffer.tobytes(), media_type='image/jpeg')
 
 
-# --- [САМОЕ ВАЖНОЕ ОБНОВЛЕНИЕ] Эндпоинт для HTML-страницы ---
 @app.get("/download/{video_id}/{music_file_id}", response_class=HTMLResponse)
 async def download_page_with_video(request: Request, video_id: str, music_file_id: str):
     video_path = os.path.join(config.VIDEO_CACHE_DIR, f"{video_id}.mp4")
@@ -154,14 +152,11 @@ async def download_page_with_video(request: Request, video_id: str, music_file_i
     
     _, metadata = await database.get_cached_video(video_id)
     
-    # --- [НОВЫЙ КОД] Cache Busting ---
-    # Получаем время последней модификации файлов для сброса кэша в браузере
     try:
         css_version = int(os.path.getmtime("templates/static/style.css"))
         js_version = int(os.path.getmtime("templates/static/script.js"))
     except OSError:
         css_version = js_version = int(time.time())
-    # --- КОНЕЦ НОВОГО КОДА ---
     
     context = {
         "request": request,
@@ -172,13 +167,15 @@ async def download_page_with_video(request: Request, video_id: str, music_file_i
         "track_title": "Трек из видео",
         "track_artist": "Исполнитель неизвестен",
         "cover_url": f"/video_thumb/{video_id}",
-        "css_version": css_version, # Передаем в шаблон
-        "js_version": js_version    # Передаем в шаблон
+        "author_avatar_url": "", # Пустое значение по умолчанию
+        "css_version": css_version,
+        "js_version": js_version
     }
 
     if metadata:
         context["author_name"] = metadata.get("author", {}).get("uniqueId", context["author_name"])
         context["video_desc"] = metadata.get("description") or context["video_desc"]
+        context["author_avatar_url"] = metadata.get("author", {}).get("avatarThumb", "")
         if shazam_result := metadata.get("shazam"):
             context["track_title"] = shazam_result.get("title", context["track_title"])
             context["track_artist"] = shazam_result.get("artist", context["track_artist"])
