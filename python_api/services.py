@@ -1,3 +1,5 @@
+# python_api/services.py
+
 import httpx
 import tempfile
 import uuid
@@ -12,24 +14,20 @@ async def resolve_short_url(url: str) -> str:
     Раскрывает любые короткие ссылки TikTok (vt.tiktok.com, vm.tiktok.com, tiktok.com/t/...)
     в полные URL-адреса, следуя редиректам.
     """
-    # ИСПРАВЛЕНИЕ: Добавлена проверка на "/t/" в ссылке
     if "vt.tiktok.com" in url or "vm.tiktok.com" in url or "/t/" in url:
         try:
-            # Делаем вид, что мы браузер, чтобы избежать блокировок
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
             async with httpx.AsyncClient(follow_redirects=True) as client:
-                # GET-запрос надежнее для отслеживания всех редиректов
                 response = await client.get(url, timeout=15.0, headers=headers)
                 final_url = str(response.url).split("?")[0]
                 logger.info(f"Короткая ссылка {url} раскрыта в {final_url}")
                 return final_url
         except httpx.RequestError as e:
             logger.error(f"Не удалось обработать короткую ссылку TikTok {url}: {e}", exc_info=True)
-            return url.split("?")[0] # Возвращаем очищенный URL даже в случае ошибки
+            return url.split("?")[0]
     
-    # Для обычных ссылок просто убираем параметры
     return url.split("?")[0]
 
 
@@ -44,7 +42,7 @@ async def download_music(search_query: str) -> str | None:
         
         def duration_filter(info_dict):
             duration = info_dict.get('duration')
-            if duration and duration > 1200: # 1200 секунд = 20 минут
+            if duration and duration > 1200:
                 return 'Видео слишком длинное'
             return None
 
@@ -99,3 +97,14 @@ async def recognize_and_download_shazam(video_bytes: bytes, shazam_instance: Sha
     except Exception as e:
         logger.error(f"Ошибка Shazam: {e}")
     return None, None
+
+# --- НОВАЯ ФУНКЦИЯ ДЛЯ СКАЧИВАНИЯ ---
+async def download_file(client: httpx.AsyncClient, url: str, path: str, headers: dict, cookies: dict):
+    """Асинхронно скачивает файл и сохраняет его."""
+    try:
+        r = await client.get(url, headers=headers, cookies=cookies, follow_redirects=True, timeout=30.0)
+        r.raise_for_status()
+        with open(path, "wb") as f:
+            f.write(r.content)
+    except Exception as e:
+        logger.error(f"Ошибка при скачивании файла {url} в {path}: {e}")

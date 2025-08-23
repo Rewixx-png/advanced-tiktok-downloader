@@ -1,3 +1,5 @@
+# python_api/config.py
+
 import os
 import logging
 from dotenv import load_dotenv
@@ -17,9 +19,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "cache.db")
 VIDEO_CACHE_DIR = os.path.join(BASE_DIR, "video_cache")
 AUDIO_DIR = os.path.join(BASE_DIR, "audio_files")
+TEMP_IMAGE_DIR = os.path.join(BASE_DIR, "temp_images") # <--- ВОТ ЭТА СТРОКА ДОБАВЛЕНА
 TEMPLATE_FILE = os.path.join(BASE_DIR, "templates", "download_page.html")
 
-# --- Настройки yt-dlp (проблемная строка УДАЛЕНА) ---
+# --- Настройки yt-dlp ---
 YDL_OPTIONS = {
     'format': 'bestaudio/best',
     'outtmpl': '', 
