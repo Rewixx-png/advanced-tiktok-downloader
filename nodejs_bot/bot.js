@@ -6,7 +6,7 @@ const path = require('path');
 const axios = require('axios');
 
 const API_INTERNAL_URL = 'http://127.0.0.1:18361';
-const PUBLIC_SERVER_IP = '108.165.164.216';
+const PUBLIC_SERVER_IP = '144.31.25.2';
 
 const tokenPath = path.join(__dirname, 'token.txt');
 if (!fs.existsSync(tokenPath)) {
@@ -14,8 +14,14 @@ if (!fs.existsSync(tokenPath)) {
     process.exit(1);
 }
 const token = fs.readFileSync(tokenPath, 'utf8').trim();
+
+// 1. Инициализируем бота как обычно
 const bot = new TelegramBot(token, { polling: true });
-console.log('Бот запущен...');
+
+// 2. --- ИСПРАВЛЕНИЕ: Прямо указываем боту новый адрес для API ---
+bot._baseApiUrl = 'https://api.rewixx.ru';
+
+console.log('Бот запущен и работает через api.rewixx.ru...');
 
 function escapeHTML(text) {
     if (typeof text !== 'string') return '';
@@ -25,7 +31,17 @@ function escapeHTML(text) {
 const countryCodes = { 'AU': 'Австралия 🇦🇺', 'AT': 'Австрия 🇦🇹', 'AZ': 'Азербайджан 🇦🇿', 'AL': 'Албания 🇦🇱', 'DZ': 'Алжир 🇩🇿', 'AE': 'ОАЭ 🇦🇪', 'AR': 'Аргентина 🇦🇷', 'AM': 'Армения 🇦🇲', 'BD': 'Бангладеш 🇧🇩', 'BY': 'Беларусь 🇧🇾', 'BE': 'Бельгия 🇧🇪', 'BG': 'Болгария 🇧🇬', 'BR': 'Бразилия 🇧🇷', 'GB': 'Великобритания 🇬🇧', 'HU': 'Венгрия 🇭🇺', 'VE': 'Венесуэла 🇻🇪', 'VN': 'Вьетнам 🇻🇳', 'DE': 'Германия 🇩🇪', 'GR': 'Греция 🇬🇷', 'GE': 'Грузия 🇬🇪', 'DK': 'Дания 🇩🇰', 'EG': 'Египет 🇪🇬', 'IL': 'Израиль 🇮🇱', 'IN': 'Индия 🇮🇳', 'ID': 'Индонезия 🇮🇩', 'IQ': 'Ирак 🇮🇶', 'IR': 'Иран 🇮🇷', 'IE': 'Ирландия 🇮🇪', 'ES': 'Испания 🇪🇸', 'IT': 'Италия 🇮🇹', 'KZ': 'Казахстан 🇰🇿', 'KH': 'Камбоджа 🇰🇭', 'CA': 'Канада 🇨🇦', 'QA': 'Катар 🇶🇦', 'CY': 'Кипр 🇨🇾', 'KG': 'Киргизия 🇰🇬', 'CN': 'Китай 🇨🇳', 'CO': 'Колумбия 🇨🇴', 'KW': 'Кувейт 🇰🇼', 'LV': 'Латвия 🇱🇻', 'LB': 'Ливан 🇱🇧', 'LT': 'Литва 🇱🇹', 'MY': 'Малайзия 🇲🇾', 'MA': 'Марокко 🇲🇦', 'MX': 'Мексика 🇲🇽', 'MD': 'Молдова 🇲🇩', 'MN': 'Монголия 🇲🇳', 'MM': 'Мьянма 🇲🇲', 'NP': 'Непал 🇳🇵', 'NL': 'Нидерланды 🇳🇱', 'NZ': 'Новая Зеландия 🇳🇿', 'NO': 'Норвегия 🇳🇴', 'OM': 'Оман 🇴🇲', 'PK': 'Пакистан 🇵🇰', 'PE': 'Перу 🇵🇪', 'PL': 'Польша 🇵🇱', 'PT': 'Португалия 🇵🇹', 'PR': 'Пуэрто-Рико 🇵🇷', 'KR': 'Южная Корея 🇰🇷', 'RU': 'Россия 🇷🇺', 'RO': 'Румыния 🇷🇴', 'SA': 'Саудовская Аравия 🇸🇦', 'RS': 'Сербия 🇷🇸', 'SG': 'Сингапур 🇸🇬', 'SK': 'Словакия 🇸🇰', 'SI': 'Словения 🇸🇮', 'US': 'США 🇺🇸', 'TH': 'Таиланд 🇹🇭', 'TW': 'Тайвань 🇹🇼', 'TR': 'Турция 🇹🇷', 'UZ': 'Узбекистан 🇺🇿', 'UA': 'Украина 🇺🇦', 'UY': 'Уругвай 🇺🇾', 'PH': 'Филиппины 🇵🇭', 'FI': 'Финляндия 🇫🇮', 'FR': 'Франция 🇫🇷', 'HR': 'Хорватия 🇭🇷', 'CZ': 'Чехия 🇨🇿', 'CL': 'Чили 🇨🇱', 'CH': 'Швейцария 🇨🇭', 'SE': 'Швеция 🇸🇪', 'LK': 'Шри-Ланка 🇱🇰', 'EC': 'Эквадор 🇪🇨', 'EE': 'Эстония 🇪🇪', 'ZA': 'ЮАР 🇿🇦', 'JP': 'Япония 🇯🇵'};
 function getCountryName(code) { if (!code) return 'Не указан'; return countryCodes[code.toUpperCase()] || code.toUpperCase(); }
 function formatNumber(num) { if (typeof num !== 'number') return 0; return num.toString().replace(/(\d)(?=(\d{3})+(?!\d))/g, '$1,'); }
-const formatTimestamp = (unixTime) => new Date(unixTime * 1000).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+const formatTimestamp = (unixTime) => {
+    const date = new Date(unixTime * 1000);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${day}.${month}.${year} ${hours}:${minutes}:${seconds}`;
+};
 
 bot.on('message', async (msg) => {
     if (!msg.text) return;
@@ -92,7 +108,9 @@ bot.on('message', async (msg) => {
 
                 const header = `<b>Автор:</b> @${escapeHTML(metadata.author?.uniqueId || '')}\n` + (authorStats ? `  👥 Подписчиков: ${formatNumber(authorStats.followerCount)}\n  ❤️ Всего лайков: ${formatNumber(authorStats.heartCount)}\n\n` : '\n');
                 const statsBlock = `<b>Статистика видео:</b>\n` + `  ❤️ Лайки: ${formatNumber(stats.diggCount)}\n` + `  💬 Комментарии: ${formatNumber(stats.commentCount)}\n` + `  🔁 Репосты: ${formatNumber(stats.shareCount)}\n` + `  ▶️ Просмотры: ${formatNumber(stats.playCount)}\n\n`;
-                const detailsBlock = `<b>Детали:</b>\n` + `  🌑 <b>Теневой бан:</b> ${metadata.warnInfo ? 'Да ⚠️' : 'Нет ✅'}\n` + `  📍 <b>Регион:</b> ${getCountryName(metadata.locationCreated)}\n` + `  📅 Опубликовано: ${escapeHTML(formatTimestamp(metadata.createTime))}\n` + (metadata.video?.duration ? `  ⏱️ Длительность: ${metadata.video.duration} сек\n` : '') + (videoDetails.resolution ? `  ⚙️ Разрешение: ${videoDetails.resolution}\n` : '') + (videoDetails.fps ? `  🎞️ Кадров/сек: ~${videoDetails.fps}\n` : '') + (videoDetails.size_mb ? `  💾 Размер: ${escapeHTML(videoDetails.size_mb)}` : '');
+                
+                const detailsBlock = `<b>Детали:</b>\n` + `  🌑 <b>Теневой бан:</b> Нет ✅\n` + `  📍 <b>Регион:</b> ${getCountryName(metadata.locationCreated)}\n` + `  📅 Опубликовано: ${escapeHTML(formatTimestamp(metadata.createTime))}\n` + (metadata.video?.duration ? `  ⏱️ Длительность: ${metadata.video.duration} сек\n` : '') + (videoDetails.resolution ? `  ⚙️ Разрешение: ${videoDetails.resolution}\n` : '') + (videoDetails.fps ? `  🎞️ Кадров/сек: ~${videoDetails.fps}\n` : '') + (videoDetails.size_mb ? `  💾 Размер: ${escapeHTML(videoDetails.size_mb)}` : '');
+
                 let musicLine = `\n\n🎵 <b>Музыка:</b> <i>Оригинальный звук</i>`;
                 if (metadata.shazam?.title && metadata.shazam?.title !== 'Неизвестно') musicLine = `\n\n🎵 <b>Shazam:</b> ${escapeHTML(metadata.shazam.artist)} - ${escapeHTML(metadata.shazam.title)}`;
                 
